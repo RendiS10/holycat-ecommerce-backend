@@ -10,6 +10,7 @@ describe("Auth + Cart integration", function () {
   let email = `test+${Date.now()}@example.com`;
   let password = "secret";
   let token;
+  const agent = request.agent(app);
   let productId;
   let cartItemId;
   let userId;
@@ -37,7 +38,7 @@ describe("Auth + Cart integration", function () {
   });
 
   it("should register a new user", async () => {
-    const res = await request(app)
+    const res = await agent
       .post("/auth/register")
       .send({ email, password, name: "Integration Tester" });
     assert.strictEqual(res.statusCode, 201);
@@ -46,46 +47,35 @@ describe("Auth + Cart integration", function () {
   });
 
   it("should login and receive a token", async () => {
-    const res = await request(app)
-      .post("/auth/login")
-      .send({ email, password });
+    const res = await agent.post("/auth/login").send({ email, password });
     assert.strictEqual(res.statusCode, 200);
-    assert.ok(res.body.token);
-    token = res.body.token;
+    // cookie should be set by server; agent will keep it for subsequent requests
   });
 
   it("should add product to cart", async () => {
-    const res = await request(app)
-      .post("/cart/add")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ productId, quantity: 2 });
+    const res = await agent.post("/cart/add").send({ productId, quantity: 2 });
     assert.ok([200, 201].includes(res.statusCode));
     assert.ok(res.body.id);
     cartItemId = res.body.id;
   });
 
   it("should retrieve cart with the item", async () => {
-    const res = await request(app)
-      .get("/cart")
-      .set("Authorization", `Bearer ${token}`);
+    const res = await agent.get("/cart");
     assert.strictEqual(res.statusCode, 200);
     assert.ok(Array.isArray(res.body.items));
     assert.ok(res.body.items.length > 0);
   });
 
   it("should update cart item quantity", async () => {
-    const res = await request(app)
+    const res = await agent
       .put(`/cart/update/${cartItemId}`)
-      .set("Authorization", `Bearer ${token}`)
       .send({ quantity: 5 });
     assert.strictEqual(res.statusCode, 200);
     assert.strictEqual(res.body.quantity, 5);
   });
 
   it("should remove cart item", async () => {
-    const res = await request(app)
-      .delete(`/cart/remove/${cartItemId}`)
-      .set("Authorization", `Bearer ${token}`);
+    const res = await agent.delete(`/cart/remove/${cartItemId}`);
     assert.strictEqual(res.statusCode, 200);
     assert.strictEqual(res.body.success, true);
   });

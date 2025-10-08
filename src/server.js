@@ -7,6 +7,8 @@ require("dotenv").config();
 const prisma = new PrismaClient();
 const app = express();
 app.use(express.json());
+const cookieParser = require("cookie-parser");
+app.use(cookieParser());
 
 const JWT_SECRET = process.env.JWT_SECRET || "change-me";
 
@@ -16,6 +18,8 @@ app.use((req, res, next) => {
     "Access-Control-Allow-Origin",
     process.env.FRONTEND_ORIGIN || "http://localhost:3000"
   );
+  // allow cookies to be sent cross-origin when FRONTEND_ORIGIN is set
+  res.setHeader("Access-Control-Allow-Credentials", "true");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
   if (req.method === "OPTIONS") return res.sendStatus(204);
@@ -28,10 +32,12 @@ function generateToken(userId) {
 }
 
 async function authMiddleware(req, res, next) {
+  // Try Authorization header first, then cookie
   const header = req.headers.authorization;
-  if (!header || !header.startsWith("Bearer "))
-    return res.status(401).json({ error: "Unauthorized" });
-  const token = header.split(" ")[1];
+  let token;
+  if (header && header.startsWith("Bearer ")) token = header.split(" ")[1];
+  else if (req.cookies && req.cookies.token) token = req.cookies.token;
+  if (!token) return res.status(401).json({ error: "Unauthorized" });
   try {
     const payload = jwt.verify(token, JWT_SECRET);
     req.userId = payload.userId;
@@ -86,14 +92,41 @@ app.post("/auth/login", async (req, res) => {
       console.log(`[DEBUG] bcrypt.compare result for email=${email}: ${ok}`);
     if (!ok) return res.status(401).json({ error: "Invalid credentials" });
     const token = generateToken(user.id);
+    // Set httpOnly cookie so frontend JS can't access token
+    res.cookie("token", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
     return res.json({
-      token,
       user: { id: user.id, email: user.email, name: user.name },
     });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: "Server error" });
   }
+});
+
+// return current authenticated user (if cookie/token present)
+app.get("/auth/me", authMiddleware, async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!user) return res.status(401).json({ error: "Unauthorized" });
+    return res.json({ id: user.id, email: user.email, name: user.name });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Server error" });
+  }
+});
+
+// logout: clear cookie
+app.post("/auth/logout", (req, res) => {
+  res.clearCookie("token", {
+    httpOnly: true,
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+  });
+  return res.json({ success: true });
 });
 
 // Dev-only: list users (email + id) when DEBUG_API=1
