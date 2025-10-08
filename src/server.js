@@ -1,18 +1,34 @@
+require("dotenv").config();
 const express = require("express");
 const { PrismaClient } = require("@prisma/client");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
-require("dotenv").config();
+const cookieParser = require("cookie-parser");
+// const cors = require("cors"); // Tidak digunakan karena sudah ada custom middleware di bawah
 
 const prisma = new PrismaClient();
 const app = express();
 app.use(express.json());
-const cookieParser = require("cookie-parser");
 app.use(cookieParser());
 
 const JWT_SECRET = process.env.JWT_SECRET || "change-me";
 
-// Simple CORS for local development
+// --- NEW: Cookie Options Helper untuk mengatasi SameSite ---
+function getCookieOptions() {
+  const isProduction = process.env.NODE_ENV === "production";
+  return {
+    httpOnly: true,
+    // FIX: Gunakan SameSite=Lax di Development (HTTP) agar cookie tidak dihapus browser.
+    // Di Production (HTTPS), gunakan SameSite=None dan Secure=true.
+    secure: isProduction,
+    sameSite: isProduction ? "none" : "lax", // FIX APPLIED HERE
+    path: "/",
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+  };
+}
+// --- END: Cookie Options Helper ---
+
+// Simple CORS for local development (Tetap mempertahankan struktur CORS custom Anda)
 app.use((req, res, next) => {
   res.setHeader(
     "Access-Control-Allow-Origin",
@@ -43,6 +59,13 @@ async function authMiddleware(req, res, next) {
     req.userId = payload.userId;
     next();
   } catch (err) {
+    // Jika token tidak valid, hapus cookie (untuk berjaga-jaga)
+    res.clearCookie("token", {
+      httpOnly: true,
+      sameSite: getCookieOptions().sameSite, // Gunakan SameSite yang sama saat menghapus
+      secure: getCookieOptions().secure,
+      path: "/",
+    });
     return res.status(401).json({ error: "Invalid token" });
   }
 }
@@ -92,16 +115,24 @@ app.post("/auth/login", async (req, res) => {
       console.log(`[DEBUG] bcrypt.compare result for email=${email}: ${ok}`);
     if (!ok) return res.status(401).json({ error: "Invalid credentials" });
     const token = generateToken(user.id);
-    // Set httpOnly cookie so frontend JS can't access token
-    res.cookie("token", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
-    return res.json({
+
+    // PERUBAHAN: Menggunakan helper getCookieOptions
+    const cookieOptions = getCookieOptions();
+
+    // Set httpOnly cookie dengan SameSite yang benar
+    res.cookie("token", token, cookieOptions);
+
+    // For local development, also return token in response so the frontend
+    // can fall back to using an Authorization header when cookies are blocked
+    // by the browser (sameSite/secure restrictions). Do NOT enable this in
+    // production.
+    const payload = {
       user: { id: user.id, email: user.email, name: user.name },
-    });
+    };
+    if (process.env.NODE_ENV !== "production") {
+      payload.token = token;
+    }
+    return res.json(payload);
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: "Server error" });
@@ -122,9 +153,14 @@ app.get("/auth/me", authMiddleware, async (req, res) => {
 
 // logout: clear cookie
 app.post("/auth/logout", (req, res) => {
+  // PERUBAHAN: Menggunakan opsi cookie yang sama saat menghapus
+  const cookieOptions = getCookieOptions();
+
   res.clearCookie("token", {
     httpOnly: true,
-    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    sameSite: cookieOptions.sameSite, // Harus sama saat di-set
+    secure: cookieOptions.secure,
+    path: "/",
   });
   return res.json({ success: true });
 });
@@ -195,20 +231,36 @@ app.post("/cart/add", authMiddleware, async (req, res) => {
   }
 });
 
+// 2. Get user cart (Protected route - GET /cart)
 app.get("/cart", authMiddleware, async (req, res) => {
   const userId = req.userId;
   try {
     const items = await prisma.cartItem.findMany({
       where: { userId },
-      include: { product: true },
+      include: {
+        product: {
+          select: {
+            id: true,
+            title: true, // PERBAIKAN: Mengganti 'name' menjadi 'title'
+            price: true,
+            image: true, // Menggunakan 'image' sesuai schema, bukan 'imageUrl'
+          },
+        },
+      },
+      orderBy: {
+        product: {
+          title: "asc", // PERBAIKAN: Mengganti 'name' menjadi 'title'
+        },
+      },
     });
+
     const subtotal = items.reduce(
       (s, it) => s + it.quantity * it.product.price,
       0
     );
     res.json({ items, subtotal });
   } catch (err) {
-    console.error(err);
+    console.error("Get cart error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
