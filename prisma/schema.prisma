@@ -7,22 +7,30 @@ datasource db {
 	url      = env("DATABASE_URL")
 }
 
+// NEW: Mendefinisikan peran pengguna
+enum Role {
+	CUSTOMER
+	ADMIN
+}
+
 model User {
-	id        Int        @id @default(autoincrement())
-	email     String     @unique
+	id        Int      @id @default(autoincrement())
+	email     String   @unique
 	password  String
 	name      String
-	createdAt DateTime   @default(now())
+	// FIELD BARU: Menggunakan Role dengan default CUSTOMER
+	role      Role     @default(CUSTOMER)
+	createdAt DateTime @default(now())
 	cartItems CartItem[]
 }
 
 model Product {
-	id          Int        @id @default(autoincrement())
+	id          Int      @id @default(autoincrement())
 	title       String
 	description String?
 	price       Float
 	image       String?
-	createdAt   DateTime   @default(now())
+	createdAt   DateTime @default(now())
 	cartItems   CartItem[]
 }
 
@@ -35,6 +43,7 @@ model CartItem {
 	quantity  Int      @default(1)
 	createdAt DateTime @default(now())
 
+	@@unique([userId, productId]) // Tambahkan kembali unique constraint yang hilang
 	@@index([userId])
 	@@index([productId])
 }

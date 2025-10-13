@@ -1,4 +1,4 @@
-const { PrismaClient } = require("@prisma/client");
+const { PrismaClient, Role } = require("@prisma/client"); // <-- Import Role
 const prisma = new PrismaClient();
 
 async function main() {
@@ -51,11 +51,25 @@ async function main() {
   if (!existingUser) {
     const hash = await bcrypt.hash(testPassword, 10);
     await prisma.user.create({
-      data: { email: testEmail, password: hash, name: "Test User" },
+      data: {
+        email: testEmail,
+        password: hash,
+        name: "Admin User",
+        role: Role.ADMIN, // <-- Set role test user menjadi ADMIN
+      },
     });
-    console.log("Created test user: test@example.com / secret");
+    console.log("Created test user: test@example.com (ADMIN) / secret");
   } else {
-    console.log("Test user already exists");
+    // Pastikan user lama juga punya role
+    if (existingUser.role !== Role.ADMIN) {
+      await prisma.user.update({
+        where: { email: testEmail },
+        data: { role: Role.ADMIN },
+      });
+      console.log("Updated existing test user to ADMIN role.");
+    } else {
+      console.log("Test user already exists and has ADMIN role.");
+    }
   }
 
   console.log("Seed finished.");
