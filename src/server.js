@@ -1,6 +1,5 @@
 require("dotenv").config();
 const express = require("express");
-// NEW: Impor Role dari Prisma Client
 const { PrismaClient, Role } = require("@prisma/client");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
@@ -73,7 +72,9 @@ async function authMiddleware(req, res, next) {
 
 // --- Auth Routes ---
 app.post("/auth/register", async (req, res) => {
-  const { email, password, name } = req.body || {};
+  // NEW: Tambahkan field baru di destructuring
+  const { email, password, name, city, address, phone } = req.body || {};
+
   if (!email || !password || !name)
     return res
       .status(400)
@@ -84,11 +85,27 @@ app.post("/auth/register", async (req, res) => {
       return res.status(409).json({ error: "Email already registered" });
     const hash = await bcrypt.hash(password, 10);
 
-    // PERUBAHAN: Set role default ke CUSTOMER
+    // PERUBAHAN: Set role default ke CUSTOMER dan masukkan field alamat baru
     const user = await prisma.user.create({
-      data: { email, password: hash, name, role: Role.CUSTOMER },
-      // Sertakan role dalam respons register
-      select: { id: true, email: true, name: true, role: true },
+      data: {
+        email,
+        password: hash,
+        name,
+        city, // Field baru
+        address, // Field baru
+        phone, // Field baru
+        role: Role.CUSTOMER,
+      },
+      // Sertakan semua field di select statement
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        city: true,
+        address: true,
+        phone: true,
+      },
     });
     return res.status(201).json(user);
   } catch (err) {
@@ -105,7 +122,7 @@ app.post("/auth/login", async (req, res) => {
     if (process.env.DEBUG_API === "1") {
       console.log(`[DEBUG] /auth/login attempt for email=${email}`);
     }
-    // PERUBAHAN: Ambil role dari database
+    // PERUBAHAN: Ambil user dengan semua field yang diperlukan
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
       if (process.env.DEBUG_API === "1")
@@ -124,13 +141,16 @@ app.post("/auth/login", async (req, res) => {
 
     res.cookie("token", token, cookieOptions);
 
-    // PERUBAHAN: Sertakan role dalam payload login
+    // PERUBAHAN: Sertakan semua field (termasuk role, city, address, phone) dalam payload login
     const payload = {
       user: {
         id: user.id,
         email: user.email,
         name: user.name,
         role: user.role,
+        city: user.city,
+        address: user.address,
+        phone: user.phone,
       },
     };
     if (process.env.NODE_ENV !== "production") {
@@ -146,13 +166,21 @@ app.post("/auth/login", async (req, res) => {
 // return current authenticated user (if cookie/token present)
 app.get("/auth/me", authMiddleware, async (req, res) => {
   try {
-    // PERUBAHAN: Ambil role saat mengambil data user
+    // PERUBAHAN: Ambil semua field yang diperlukan saat cek sesi
     const user = await prisma.user.findUnique({
       where: { id: req.userId },
-      select: { id: true, email: true, name: true, role: true },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        city: true,
+        address: true,
+        phone: true,
+      },
     });
     if (!user) return res.status(401).json({ error: "Unauthorized" });
-    return res.json(user); // user object sudah termasuk role
+    return res.json(user);
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: "Server error" });
@@ -177,7 +205,16 @@ if (process.env.DEBUG_API === "1") {
   app.get("/debug/users", async (req, res) => {
     try {
       const users = await prisma.user.findMany({
-        select: { id: true, email: true, name: true, role: true }, // Tambahkan role
+        // PERUBAHAN: Sertakan field role dan alamat
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+          city: true,
+          address: true,
+          phone: true,
+        },
       });
       res.json(users);
     } catch (err) {

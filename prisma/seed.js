@@ -1,5 +1,6 @@
-const { PrismaClient, Role } = require("@prisma/client"); // <-- Import Role
+const { PrismaClient, Role } = require("@prisma/client");
 const prisma = new PrismaClient();
+const bcrypt = require("bcrypt"); // Pastikan bcrypt diimpor jika diperlukan
 
 async function main() {
   const products = [
@@ -42,12 +43,19 @@ async function main() {
   });
 
   // Create a test user for login (email: test@example.com, password: secret)
-  const bcrypt = require("bcrypt");
   const testEmail = "test@example.com";
   const testPassword = "secret";
   const existingUser = await prisma.user.findUnique({
     where: { email: testEmail },
   });
+
+  const adminData = {
+    role: Role.ADMIN,
+    city: "Jakarta Pusat",
+    address: "Jalan Merdeka No. 101, Komplek Admin",
+    phone: "08123456789",
+  };
+
   if (!existingUser) {
     const hash = await bcrypt.hash(testPassword, 10);
     await prisma.user.create({
@@ -55,20 +63,22 @@ async function main() {
         email: testEmail,
         password: hash,
         name: "Admin User",
-        role: Role.ADMIN, // <-- Set role test user menjadi ADMIN
+        ...adminData, // Spread new fields
       },
     });
     console.log("Created test user: test@example.com (ADMIN) / secret");
   } else {
-    // Pastikan user lama juga punya role
-    if (existingUser.role !== Role.ADMIN) {
+    // Update existing user with ADMIN role and new address fields
+    if (existingUser.role !== Role.ADMIN || !existingUser.city) {
       await prisma.user.update({
         where: { email: testEmail },
-        data: { role: Role.ADMIN },
+        data: adminData,
       });
-      console.log("Updated existing test user to ADMIN role.");
+      console.log(
+        "Updated existing test user to ADMIN role and added address details."
+      );
     } else {
-      console.log("Test user already exists and has ADMIN role.");
+      console.log("Test user already exists and has complete ADMIN details.");
     }
   }
 

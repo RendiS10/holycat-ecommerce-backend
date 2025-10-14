@@ -18,7 +18,11 @@ model User {
 	email     String   @unique
 	password  String
 	name      String
-	// FIELD BARU: Menggunakan Role dengan default CUSTOMER
+	// FIELD BARU: Tambahan untuk checkout/profil
+	city      String? 
+	address   String? 
+	phone     String? 
+	// FIELD ROLE: Menggunakan Role dengan default CUSTOMER
 	role      Role     @default(CUSTOMER)
 	createdAt DateTime @default(now())
 	cartItems CartItem[]
@@ -43,7 +47,7 @@ model CartItem {
 	quantity  Int      @default(1)
 	createdAt DateTime @default(now())
 
-	@@unique([userId, productId]) // Tambahkan kembali unique constraint yang hilang
+	@@unique([userId, productId])
 	@@index([userId])
 	@@index([productId])
 }
