@@ -1,172 +1,181 @@
-require("dotenv").config();
-const express = require("express");
-const { PrismaClient, Role } = require("@prisma/client");
-const bcrypt = require("bcrypt");
-const jwt = require("jsonwebtoken");
-const cookieParser = require("cookie-parser");
-// const cors = require("cors"); // Tidak digunakan karena sudah ada custom middleware di bawah
+import "dotenv/config";
+import express from "express";
+import cookieParser from "cookie-parser";
+import jwt from "jsonwebtoken";
+import bcrypt from "bcrypt";
+// WAJIB: Import PrismaClient dan Role dari @prisma/client
+import { PrismaClient, Role } from "@prisma/client";
+// WAJIB: Import body dan validationResult dari express-validator
+import { body, validationResult } from "express-validator";
 
 const prisma = new PrismaClient();
 const app = express();
+const PORT = process.env.PORT || 4000;
+const JWT_SECRET = process.env.JWT_SECRET || "your_super_secret_key";
+const NODE_ENV = process.env.NODE_ENV || "development";
+
+// ----------------------------------------------------------------------
+// ---------------------------- MIDDLEWARES -----------------------------
+// ----------------------------------------------------------------------
+
 app.use(express.json());
 app.use(cookieParser());
 
-const JWT_SECRET = process.env.JWT_SECRET || "change-me";
-
-// --- NEW: Cookie Options Helper untuk mengatasi SameSite ---
-function getCookieOptions() {
-  const isProduction = process.env.NODE_ENV === "production";
-  return {
-    httpOnly: true,
-    // FIX: Gunakan SameSite=Lax di Development (HTTP) agar cookie tidak dihapus browser.
-    // Di Production (HTTPS), gunakan SameSite=None dan Secure: true.
-    secure: isProduction,
-    sameSite: isProduction ? "none" : "lax", // FIX APPLIED HERE
-    path: "/",
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-  };
-}
-// --- END: Cookie Options Helper ---
-
-// Simple CORS for local development (Tetap mempertahankan struktur CORS custom Anda)
+// Custom CORS middleware
 app.use((req, res, next) => {
-  res.setHeader(
-    "Access-Control-Allow-Origin",
-    process.env.FRONTEND_ORIGIN || "http://localhost:3000"
-  );
-  // allow cookies to be sent cross-origin when FRONTEND_ORIGIN is set
-  res.setHeader("Access-Control-Allow-Credentials", "true");
+  const allowedOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
+  const origin = req.headers.origin;
+
+  if (allowedOrigins.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  }
+
+  res.setHeader("Access-Control-Allow-Credentials", true);
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-  if (req.method === "OPTIONS") return res.sendStatus(204);
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PUT, DELETE, OPTIONS"
+  );
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
   next();
 });
 
-// --- Helpers ---
-function generateToken(userId) {
-  return jwt.sign({ userId }, JWT_SECRET, { expiresIn: "7d" });
-}
+// Helper function to generate JWT
+const generateToken = (userId, role) => {
+  // Termasuk role di token
+  return jwt.sign({ userId, role }, JWT_SECRET, { expiresIn: "7d" });
+};
 
-async function authMiddleware(req, res, next) {
-  // Try Authorization header first, then cookie
-  const header = req.headers.authorization;
-  let token;
-  if (header && header.startsWith("Bearer ")) token = header.split(" ")[1];
-  else if (req.cookies && req.cookies.token) token = req.cookies.token;
-  if (!token) return res.status(401).json({ error: "Unauthorized" });
+// Middleware untuk memverifikasi JWT dari cookie atau Authorization header
+const authMiddleware = (req, res, next) => {
+  let token = req.cookies.token;
+
+  if (!token && req.headers.authorization) {
+    const [bearer, headerToken] = req.headers.authorization.split(" ");
+    if (bearer === "Bearer" && headerToken) {
+      token = headerToken;
+    }
+  }
+
+  if (!token) {
+    return res.status(401).json({ error: "Unauthorized: No token provided" });
+  }
+
   try {
-    const payload = jwt.verify(token, JWT_SECRET);
-    req.userId = payload.userId;
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.userId = decoded.userId;
+    req.userRole = decoded.role; // Ambil role dari token
     next();
   } catch (err) {
-    // Jika token tidak valid, hapus cookie (untuk berjaga-jaga)
     res.clearCookie("token", {
       httpOnly: true,
-      sameSite: getCookieOptions().sameSite, // Gunakan SameSite yang sama saat menghapus
-      secure: getCookieOptions().secure,
-      path: "/",
+      secure: NODE_ENV === "production",
+      sameSite: "Lax",
     });
-    return res.status(401).json({ error: "Invalid token" });
+    return res.status(401).json({ error: "Unauthorized: Invalid token" });
   }
-}
+};
 
-// --- Auth Routes ---
-app.post("/auth/register", async (req, res) => {
-  // NEW: Tambahkan field baru di destructuring
-  const { email, password, name, city, address, phone } = req.body || {};
+// ----------------------------------------------------------------------
+// -------------------------- AUTH ROUTES -------------------------------
+// ----------------------------------------------------------------------
 
-  if (!email || !password || !name)
-    return res
-      .status(400)
-      .json({ error: "email, password and name are required" });
-  try {
-    const existing = await prisma.user.findUnique({ where: { email } });
-    if (existing)
-      return res.status(409).json({ error: "Email already registered" });
-    const hash = await bcrypt.hash(password, 10);
-
-    // PERUBAHAN: Set role default ke CUSTOMER dan masukkan field alamat baru
-    const user = await prisma.user.create({
-      data: {
-        email,
-        password: hash,
-        name,
-        city, // Field baru
-        address, // Field baru
-        phone, // Field baru
-        role: Role.CUSTOMER,
-      },
-      // Sertakan semua field di select statement
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        role: true,
-        city: true,
-        address: true,
-        phone: true,
-      },
-    });
-    return res.status(201).json(user);
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "Server error" });
-  }
-});
-
-app.post("/auth/login", async (req, res) => {
-  const { email, password } = req.body || {};
-  if (!email || !password)
-    return res.status(400).json({ error: "email and password are required" });
-  try {
-    if (process.env.DEBUG_API === "1") {
-      console.log(`[DEBUG] /auth/login attempt for email=${email}`);
+// 1. User Registration
+app.post(
+  "/auth/register",
+  [
+    // Validation menggunakan express-validator
+    body("email").isEmail().withMessage("Email tidak valid."),
+    body("password")
+      .isLength({ min: 6 })
+      .withMessage("Password minimal 6 karakter."),
+    body("name").notEmpty().withMessage("Nama wajib diisi."),
+  ],
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
     }
-    // PERUBAHAN: Ambil user dengan semua field yang diperlukan
+
+    const { email, password, name, city, address, phone } = req.body;
+
+    try {
+      const existingUser = await prisma.user.findUnique({ where: { email } });
+      if (existingUser) {
+        return res.status(409).json({ error: "Email sudah terdaftar." });
+      }
+
+      const hashedPassword = await bcrypt.hash(password, 10);
+
+      const newUser = await prisma.user.create({
+        data: {
+          email,
+          password: hashedPassword,
+          name,
+          role: Role.CUSTOMER, // Otomatis CUSTOMER
+          city,
+          address,
+          phone, // Field alamat baru
+        },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+          city: true,
+          address: true,
+          phone: true,
+          createdAt: true,
+        },
+      });
+
+      return res.status(201).json(newUser);
+    } catch (err) {
+      console.error("Registration error:", err);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
+
+// 2. User Login
+app.post("/auth/login", async (req, res) => {
+  const { email, password } = req.body;
+  try {
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
-      if (process.env.DEBUG_API === "1")
-        console.log(`[DEBUG] user not found for email=${email}`);
-      return res.status(401).json({ error: "Invalid credentials" });
+      return res.status(401).json({ error: "Email atau password salah" });
     }
-    if (process.env.DEBUG_API === "1")
-      console.log(`[DEBUG] user found id=${user.id} email=${user.email}`);
-    const ok = await bcrypt.compare(password, user.password);
-    if (process.env.DEBUG_API === "1")
-      console.log(`[DEBUG] bcrypt.compare result for email=${email}: ${ok}`);
-    if (!ok) return res.status(401).json({ error: "Invalid credentials" });
-    const token = generateToken(user.id);
 
-    const cookieOptions = getCookieOptions();
-
-    res.cookie("token", token, cookieOptions);
-
-    // PERUBAHAN: Sertakan semua field (termasuk role, city, address, phone) dalam payload login
-    const payload = {
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        city: user.city,
-        address: user.address,
-        phone: user.phone,
-      },
-    };
-    if (process.env.NODE_ENV !== "production") {
-      payload.token = token;
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ error: "Email atau password salah" });
     }
-    return res.json(payload);
+
+    // Generate JWT (Termasuk role user)
+    const token = generateToken(user.id, user.role);
+
+    // Set JWT in HttpOnly Cookie
+    res.cookie("token", token, {
+      httpOnly: true,
+      secure: NODE_ENV === "production",
+      sameSite: "Lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+    // Send user data (tanpa password)
+    const { password: _, ...userWithoutPass } = user;
+    return res.json({ user: userWithoutPass, token }); // token for FE fallback
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "Server error" });
+    console.error("Login error:", err);
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// return current authenticated user (if cookie/token present)
+// 3. Get Authenticated User Info
 app.get("/auth/me", authMiddleware, async (req, res) => {
   try {
-    // PERUBAHAN: Ambil semua field yang diperlukan saat cek sesi
     const user = await prisma.user.findUnique({
       where: { id: req.userId },
       select: {
@@ -177,182 +186,238 @@ app.get("/auth/me", authMiddleware, async (req, res) => {
         city: true,
         address: true,
         phone: true,
+        createdAt: true,
       },
     });
-    if (!user) return res.status(401).json({ error: "Unauthorized" });
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
     return res.json(user);
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "Server error" });
+    console.error("Get user info error:", err);
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// logout: clear cookie
+// 4. User Logout
 app.post("/auth/logout", (req, res) => {
-  const cookieOptions = getCookieOptions();
-
   res.clearCookie("token", {
     httpOnly: true,
-    sameSite: cookieOptions.sameSite,
-    secure: cookieOptions.secure,
-    path: "/",
+    secure: NODE_ENV === "production",
+    sameSite: "Lax",
   });
-  return res.json({ success: true });
+  return res.json({ message: "Logout successful" });
 });
 
-// Dev-only: list users (email + id) when DEBUG_API=1
-if (process.env.DEBUG_API === "1") {
-  app.get("/debug/users", async (req, res) => {
-    try {
-      const users = await prisma.user.findMany({
-        // PERUBAHAN: Sertakan field role dan alamat
-        select: {
-          id: true,
-          email: true,
-          name: true,
-          role: true,
-          city: true,
-          address: true,
-          phone: true,
-        },
-      });
-      res.json(users);
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: "Server error" });
-    }
-  });
-}
+// ----------------------------------------------------------------------
+// -------------------------- P R O F I L E -----------------------------
+// ----------------------------------------------------------------------
 
-// --- Products ---
+// 5. Update User Profile (Protected route - PUT /user/profile)
+app.put("/user/profile", authMiddleware, async (req, res) => {
+  const userId = req.userId;
+  const { name, city, address, phone } = req.body || {};
+
+  const updateData = {};
+  if (name !== undefined) updateData.name = name;
+  if (city !== undefined) updateData.city = city;
+  if (address !== undefined) updateData.address = address;
+  if (phone !== undefined) updateData.phone = phone;
+
+  // Pencegahan: Jangan biarkan klien mengubah role, email, atau password
+  if (req.body.role || req.body.email || req.body.password) {
+    return res.status(403).json({
+      error: "Forbidden: Cannot change role, email, or password here",
+    });
+  }
+
+  // Jika tidak ada data yang dikirim, keluar
+  if (Object.keys(updateData).length === 0) {
+    return res.status(400).json({ error: "No update data provided" });
+  }
+
+  try {
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: updateData,
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        city: true,
+        address: true,
+        phone: true,
+        createdAt: true,
+      },
+    });
+
+    return res.json(updatedUser);
+  } catch (err) {
+    console.error("Profile update error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ----------------------------------------------------------------------
+// ------------------------ PRODUCT ROUTES ------------------------------
+// ----------------------------------------------------------------------
+
+// 6. Get All Products (Simplified)
 app.get("/products", async (req, res) => {
   try {
     const products = await prisma.product.findMany();
-    res.json(products);
+    return res.json(products);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Server error" });
+    console.error("Get products error:", err);
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
 
+// 7. Get Product by ID
 app.get("/products/:id", async (req, res) => {
-  const id = Number(req.params.id);
-  if (!id) return res.status(400).json({ error: "Invalid id" });
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID format" });
+
   try {
     const product = await prisma.product.findUnique({ where: { id } });
-    if (!product) return res.status(404).json({ error: "Not found" });
-    res.json(product);
+    if (!product) {
+      return res.status(404).json({ error: "Product not found" });
+    }
+    return res.json(product);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Server error" });
+    console.error("Get product by ID error:", err);
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// --- Cart ---
+// ----------------------------------------------------------------------
+// ------------------------- CART ROUTES --------------------------------
+// ----------------------------------------------------------------------
+
+// Helper: Mendapatkan item keranjang user
+const getCartItemsForUser = async (userId) => {
+  return prisma.cartItem.findMany({
+    where: { userId },
+    include: {
+      product: {
+        select: { id: true, title: true, price: true, image: true },
+      },
+    },
+    orderBy: { product: { title: "asc" } },
+  });
+};
+
+// 8. Get Cart Content (Protected route)
+app.get("/cart", authMiddleware, async (req, res) => {
+  try {
+    const items = await getCartItemsForUser(req.userId);
+
+    const subtotal = items.reduce(
+      (sum, item) => sum + item.quantity * item.product.price,
+      0
+    );
+
+    return res.json({ items, subtotal: subtotal.toFixed(2) });
+  } catch (err) {
+    console.error("Get cart error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// 9. Add/Update Item in Cart (Protected route)
 app.post("/cart/add", authMiddleware, async (req, res) => {
-  const { productId, quantity } = req.body || {};
+  const { productId, quantity = 1 } = req.body;
   const userId = req.userId;
-  if (!productId)
-    return res.status(400).json({ error: "productId is required" });
+
+  const numericProductId = parseInt(productId);
+
+  if (isNaN(numericProductId) || quantity <= 0) {
+    return res.status(400).json({ error: "Invalid product ID or quantity" });
+  }
+
   try {
     const existing = await prisma.cartItem.findFirst({
-      where: { userId, productId },
+      where: { userId, productId: numericProductId },
     });
+
     if (existing) {
       const updated = await prisma.cartItem.update({
         where: { id: existing.id },
-        data: { quantity: existing.quantity + (quantity || 1) },
+        data: { quantity: existing.quantity + quantity },
       });
       return res.json(updated);
     }
+
     const created = await prisma.cartItem.create({
-      data: { userId, productId, quantity: quantity || 1 },
+      data: { userId, productId: numericProductId, quantity },
     });
+
     return res.status(201).json(created);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Server error" });
+    console.error("Add to cart error:", err);
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// 2. Get user cart (Protected route - GET /cart)
-app.get("/cart", authMiddleware, async (req, res) => {
-  const userId = req.userId;
-  try {
-    const items = await prisma.cartItem.findMany({
-      where: { userId },
-      include: {
-        product: {
-          select: {
-            id: true,
-            title: true,
-            price: true,
-            image: true,
-          },
-        },
-      },
-      orderBy: {
-        product: {
-          title: "asc",
-        },
-      },
-    });
-
-    const subtotal = items.reduce(
-      (s, it) => s + it.quantity * it.product.price,
-      0
-    );
-    res.json({ items, subtotal });
-  } catch (err) {
-    console.error("Get cart error:", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
+// 10. Update cart item quantity (Protected route)
 app.put("/cart/update/:id", authMiddleware, async (req, res) => {
-  const id = Number(req.params.id);
-  const { quantity } = req.body || {};
+  const id = parseInt(req.params.id);
+  const { quantity } = req.body;
   const userId = req.userId;
-  if (!id || typeof quantity !== "number")
-    return res.status(400).json({ error: "invalid payload" });
+
+  if (isNaN(id) || typeof quantity !== "number" || quantity < 0) {
+    return res.status(400).json({ error: "Invalid ID or quantity payload" });
+  }
+
   try {
     const item = await prisma.cartItem.findUnique({ where: { id } });
     if (!item || item.userId !== userId)
-      return res.status(403).json({ error: "Forbidden" });
-    const updated = await prisma.cartItem.update({
+      return res.status(403).json({ error: "Forbidden: Not your cart item" });
+
+    if (quantity === 0) {
+      await prisma.cartItem.delete({ where: { id } });
+      return res.json({ message: "Cart item removed" });
+    }
+
+    const updatedItem = await prisma.cartItem.update({
       where: { id },
       data: { quantity },
     });
-    res.json(updated);
+
+    return res.json(updatedItem);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Server error" });
+    console.error("Update cart item error:", err);
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
 
+// 11. Remove cart item (Protected route)
 app.delete("/cart/remove/:id", authMiddleware, async (req, res) => {
-  const id = Number(req.params.id);
+  const id = parseInt(req.params.id);
   const userId = req.userId;
-  if (!id) return res.status(400).json({ error: "invalid id" });
+
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid ID format" });
+
   try {
     const item = await prisma.cartItem.findUnique({ where: { id } });
     if (!item || item.userId !== userId)
-      return res.status(403).json({ error: "Forbidden" });
+      return res.status(403).json({ error: "Forbidden: Not your cart item" });
+
     await prisma.cartItem.delete({ where: { id } });
-    res.json({ success: true });
+    return res.json({ success: true });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Server error" });
+    console.error("Remove cart item error:", err);
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
 
 // Health endpoint (no DB required) for smoke tests
 app.get("/health", (req, res) => res.json({ ok: true }));
 
-// Export app for tests; only listen when run directly
-const PORT = process.env.PORT || 4000;
-if (require.main === module) {
-  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-}
-
-module.exports = app;
+// Start server
+app.listen(PORT, () => {
+  console.log(`Server is running on http://localhost:${PORT}`);
+});
