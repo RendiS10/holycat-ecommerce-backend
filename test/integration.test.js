@@ -1,7 +1,7 @@
-const request = require("supertest");
-const assert = require("assert");
-const { PrismaClient } = require("@prisma/client");
-const app = require("../src/server");
+import request from "supertest";
+import assert from "assert";
+import { PrismaClient } from "@prisma/client";
+import app from "../src/server.js";
 
 const prisma = new PrismaClient();
 
@@ -9,14 +9,12 @@ describe("Auth + Cart integration", function () {
   this.timeout(10000);
   let email = `test+${Date.now()}@example.com`;
   let password = "secret";
-  let token;
   const agent = request.agent(app);
   let productId;
   let cartItemId;
   let userId;
 
   before(async () => {
-    // ensure at least one product exists
     const products = await prisma.product.findMany({ take: 1 });
     if (!products || products.length === 0) {
       const p = await prisma.product.create({
@@ -29,7 +27,6 @@ describe("Auth + Cart integration", function () {
   });
 
   after(async () => {
-    // cleanup: remove user and any cart items
     if (userId) {
       await prisma.cartItem.deleteMany({ where: { userId } }).catch(() => {});
       await prisma.user.delete({ where: { id: userId } }).catch(() => {});
@@ -49,7 +46,6 @@ describe("Auth + Cart integration", function () {
   it("should login and receive a token", async () => {
     const res = await agent.post("/auth/login").send({ email, password });
     assert.strictEqual(res.statusCode, 200);
-    // cookie should be set by server; agent will keep it for subsequent requests
   });
 
   it("should add product to cart", async () => {
