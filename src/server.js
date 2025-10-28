@@ -3,8 +3,14 @@ import express from "express";
 import cookieParser from "cookie-parser";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcrypt";
-// WAJIB: Import PrismaClient dan Role dari @prisma/client
-import { PrismaClient, Role } from "@prisma/client";
+// WAJIB: Import PrismaClient dan Enum dari @prisma/client
+import {
+  PrismaClient,
+  Role,
+  Category,
+  OrderStatus,
+  PaymentMethod,
+} from "@prisma/client";
 // WAJIB: Import body dan validationResult dari express-validator
 import { body, validationResult } from "express-validator";
 
@@ -45,11 +51,12 @@ app.use((req, res, next) => {
 // Helper function to generate JWT
 const generateToken = (userId, role) => {
   // Termasuk role di token
-  return jwt.sign({ userId, role }, JWT_SECRET, { expiresIn: "7d" });
+  return jwt.sign({ userId, role }, JWT_SECRET, { expiresIn: "7d" }); //
 };
 
 // Middleware untuk memverifikasi JWT dari cookie atau Authorization header
 const authMiddleware = (req, res, next) => {
+  //
   let token = req.cookies.token;
 
   if (!token && req.headers.authorization) {
@@ -64,9 +71,9 @@ const authMiddleware = (req, res, next) => {
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.userId = decoded.userId;
-    req.userRole = decoded.role; // Ambil role dari token
+    const decoded = jwt.verify(token, JWT_SECRET); //
+    req.userId = decoded.userId; //
+    req.userRole = decoded.role; // Ambil role dari token //
     next();
   } catch (err) {
     res.clearCookie("token", {
@@ -84,7 +91,7 @@ const authMiddleware = (req, res, next) => {
 
 // 1. User Registration
 app.post(
-  "/auth/register",
+  "/auth/register", //
   [
     // Validation menggunakan express-validator
     body("email").isEmail().withMessage("Email tidak valid."),
@@ -107,9 +114,10 @@ app.post(
         return res.status(409).json({ error: "Email sudah terdaftar." });
       }
 
-      const hashedPassword = await bcrypt.hash(password, 10);
+      const hashedPassword = await bcrypt.hash(password, 10); //
 
       const newUser = await prisma.user.create({
+        //
         data: {
           email,
           password: hashedPassword,
@@ -141,6 +149,7 @@ app.post(
 
 // 2. User Login
 app.post("/auth/login", async (req, res) => {
+  //
   const { email, password } = req.body;
   try {
     const user = await prisma.user.findUnique({ where: { email } });
@@ -148,17 +157,18 @@ app.post("/auth/login", async (req, res) => {
       return res.status(401).json({ error: "Email atau password salah" });
     }
 
-    const isMatch = await bcrypt.compare(password, user.password);
+    const isMatch = await bcrypt.compare(password, user.password); //
     if (!isMatch) {
       return res.status(401).json({ error: "Email atau password salah" });
     }
 
     // Generate JWT (Termasuk role user)
-    const token = generateToken(user.id, user.role);
+    const token = generateToken(user.id, user.role); //
 
     // Set JWT in HttpOnly Cookie
     res.cookie("token", token, {
-      httpOnly: true,
+      //
+      httpOnly: true, //
       secure: NODE_ENV === "production",
       sameSite: "Lax",
       maxAge: 7 * 24 * 60 * 60 * 1000,
@@ -175,6 +185,7 @@ app.post("/auth/login", async (req, res) => {
 
 // 3. Get Authenticated User Info
 app.get("/auth/me", authMiddleware, async (req, res) => {
+  //
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.userId },
@@ -204,6 +215,7 @@ app.get("/auth/me", authMiddleware, async (req, res) => {
 // 4. User Logout
 app.post("/auth/logout", (req, res) => {
   res.clearCookie("token", {
+    //
     httpOnly: true,
     secure: NODE_ENV === "production",
     sameSite: "Lax",
@@ -267,6 +279,7 @@ app.put("/user/profile", authMiddleware, async (req, res) => {
 
 // 6. Get All Products (Simplified)
 app.get("/products", async (req, res) => {
+  //
   try {
     const products = await prisma.product.findMany();
     return res.json(products);
@@ -278,6 +291,7 @@ app.get("/products", async (req, res) => {
 
 // 7. Get Product by ID
 app.get("/products/:id", async (req, res) => {
+  //
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid ID format" });
 
@@ -312,6 +326,7 @@ const getCartItemsForUser = async (userId) => {
 
 // 8. Get Cart Content (Protected route)
 app.get("/cart", authMiddleware, async (req, res) => {
+  //
   try {
     const items = await getCartItemsForUser(req.userId);
 
@@ -320,7 +335,7 @@ app.get("/cart", authMiddleware, async (req, res) => {
       0
     );
 
-    return res.json({ items, subtotal: subtotal.toFixed(2) });
+    return res.json({ items, subtotal: subtotal.toFixed(2) }); //
   } catch (err) {
     console.error("Get cart error:", err);
     return res.status(500).json({ error: "Internal server error" });
@@ -329,6 +344,7 @@ app.get("/cart", authMiddleware, async (req, res) => {
 
 // 9. Add/Update Item in Cart (Protected route)
 app.post("/cart/add", authMiddleware, async (req, res) => {
+  //
   const { productId, quantity = 1 } = req.body;
   const userId = req.userId;
 
@@ -339,20 +355,40 @@ app.post("/cart/add", authMiddleware, async (req, res) => {
   }
 
   try {
+    // Validasi stok sebelum menambahkan ke keranjang
+    const product = await prisma.product.findUnique({
+      where: { id: numericProductId },
+      select: { stock: true, title: true },
+    });
+    if (!product) {
+      return res.status(404).json({ error: "Produk tidak ditemukan." });
+    }
+
     const existing = await prisma.cartItem.findFirst({
       where: { userId, productId: numericProductId },
     });
 
+    const quantityToAdd = quantity;
+    const currentQuantityInCart = existing ? existing.quantity : 0;
+    const futureQuantity = currentQuantityInCart + quantityToAdd;
+
+    if (product.stock < futureQuantity) {
+      return res.status(400).json({
+        error: `Stok ${product.title} tidak mencukupi (tersisa ${product.stock}, Anda mencoba menambahkan ${quantityToAdd} ke ${currentQuantityInCart} yang sudah ada).`,
+      });
+    }
+
+    // Lanjutkan jika stok cukup
     if (existing) {
       const updated = await prisma.cartItem.update({
         where: { id: existing.id },
-        data: { quantity: existing.quantity + quantity },
+        data: { quantity: futureQuantity },
       });
       return res.json(updated);
     }
 
     const created = await prisma.cartItem.create({
-      data: { userId, productId: numericProductId, quantity },
+      data: { userId, productId: numericProductId, quantity: quantityToAdd },
     });
 
     return res.status(201).json(created);
@@ -364,23 +400,38 @@ app.post("/cart/add", authMiddleware, async (req, res) => {
 
 // 10. Update cart item quantity (Protected route)
 app.put("/cart/update/:id", authMiddleware, async (req, res) => {
+  //
   const id = parseInt(req.params.id);
   const { quantity } = req.body;
   const userId = req.userId;
 
-  if (isNaN(id) || typeof quantity !== "number" || quantity < 0) {
-    return res.status(400).json({ error: "Invalid ID or quantity payload" });
+  if (isNaN(id) || typeof quantity !== "number" || quantity < 1) {
+    // Minimal 1
+    return res
+      .status(400)
+      .json({ error: "Invalid ID or quantity payload (min 1)" });
   }
 
   try {
-    const item = await prisma.cartItem.findUnique({ where: { id } });
+    const item = await prisma.cartItem.findUnique({
+      where: { id },
+      include: { product: { select: { stock: true, title: true } } },
+    });
     if (!item || item.userId !== userId)
       return res.status(403).json({ error: "Forbidden: Not your cart item" });
 
-    if (quantity === 0) {
-      await prisma.cartItem.delete({ where: { id } });
-      return res.json({ message: "Cart item removed" });
+    // Validasi stok saat update
+    if (item.product.stock < quantity) {
+      return res.status(400).json({
+        error: `Stok ${item.product.title} tidak mencukupi (tersisa ${item.product.stock}).`,
+      });
     }
+
+    // Hapus jika quantity jadi 0 (logika ini dipindah, min Qty = 1)
+    // if (quantity === 0) {
+    //   await prisma.cartItem.delete({ where: { id } });
+    //   return res.json({ message: "Cart item removed" });
+    // }
 
     const updatedItem = await prisma.cartItem.update({
       where: { id },
@@ -396,21 +447,288 @@ app.put("/cart/update/:id", authMiddleware, async (req, res) => {
 
 // 11. Remove cart item (Protected route)
 app.delete("/cart/remove/:id", authMiddleware, async (req, res) => {
+  //
   const id = parseInt(req.params.id);
   const userId = req.userId;
 
   if (isNaN(id)) return res.status(400).json({ error: "Invalid ID format" });
 
   try {
-    const item = await prisma.cartItem.findUnique({ where: { id } });
-    if (!item || item.userId !== userId)
-      return res.status(403).json({ error: "Forbidden: Not your cart item" });
+    // Verifikasi kepemilikan sebelum menghapus
+    const item = await prisma.cartItem.findFirst({
+      where: { id: id, userId: userId },
+    });
+    if (!item) {
+      // Bisa jadi 404 Not Found atau 403 Forbidden
+      return res
+        .status(404)
+        .json({ error: "Cart item not found or does not belong to user" });
+    }
 
-    await prisma.cartItem.delete({ where: { id } });
+    // Hapus item jika valid
+    await prisma.cartItem.delete({
+      where: { id: id }, // Cukup ID karena sudah diverifikasi
+    });
+
     return res.json({ success: true });
   } catch (err) {
     console.error("Remove cart item error:", err);
+    // Handle error spesifik jika item tidak ditemukan saat delete (meskipun sudah dicek)
+    if (err.code === "P2025") {
+      // Kode error Prisma untuk record not found on delete/update
+      return res.status(404).json({ error: "Cart item not found." });
+    }
     return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ----------------------------------------------------------------------
+// ------------------------- ORDER ROUTES -------------------------------
+// ----------------------------------------------------------------------
+
+// 12. Create Order from Cart (Protected) - DIMODIFIKASI untuk item terpilih
+app.post("/orders/create", authMiddleware, async (req, res) => {
+  const userId = req.userId;
+  // ==> PERUBAHAN: Ambil cartItemIds dari body <==
+  const { paymentMethod, cartItemIds } = req.body;
+
+  // Validasi Payment Method
+  if (!paymentMethod || !Object.values(PaymentMethod).includes(paymentMethod)) {
+    return res.status(400).json({ error: "Metode pembayaran tidak valid" });
+  }
+
+  // ==> PERUBAHAN: Validasi cartItemIds <==
+  if (
+    !Array.isArray(cartItemIds) ||
+    cartItemIds.length === 0 ||
+    cartItemIds.some((id) => typeof id !== "number" || isNaN(id))
+  ) {
+    return res.status(400).json({ error: "Daftar item keranjang tidak valid" });
+  }
+
+  try {
+    // --- TRANSAKSI DIMULAI ---
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Ambil HANYA item keranjang yang dipilih user beserta detail produk
+      const selectedCartItems = await tx.cartItem.findMany({
+        //
+        where: {
+          userId: userId,
+          id: { in: cartItemIds }, // ==> PERUBAHAN: Filter berdasarkan ID yang dikirim //
+        },
+        include: {
+          product: true, //
+        },
+      });
+
+      // Validasi tambahan: Pastikan semua ID yang dikirim benar-benar ada di keranjang user
+      if (selectedCartItems.length !== cartItemIds.length) {
+        //
+        throw new Error(
+          "Satu atau lebih item yang dipilih tidak valid atau bukan milik Anda."
+        ); //
+      }
+      if (selectedCartItems.length === 0) {
+        // Seharusnya tidak terjadi jika validasi awal lolos, tapi jaga-jaga
+        throw new Error("Tidak ada item valid yang dipilih.");
+      }
+
+      let totalOrderPrice = 0;
+      const orderItemsData = [];
+
+      // 2. Validasi Stok & Hitung Total (Hanya untuk item terpilih)
+      for (const item of selectedCartItems) {
+        if (item.product.stock < item.quantity) {
+          //
+          throw new Error(
+            `Stok ${item.product.title} tidak mencukupi (${item.product.stock} tersisa)`
+          ); // Lebih deskriptif //
+        }
+        totalOrderPrice += item.quantity * item.product.price; //
+        orderItemsData.push({
+          productId: item.productId,
+          quantity: item.quantity,
+          price: item.product.price, // Simpan harga saat ini //
+        });
+      }
+
+      // 3. Buat Order
+      const newOrder = await tx.order.create({
+        //
+        data: {
+          userId: userId,
+          total: totalOrderPrice,
+          status: OrderStatus.PENDING, // Status awal //
+          paymentMethod: paymentMethod, // Simpan metode pembayaran (Tugas 9) //
+          items: {
+            create: orderItemsData, // Buat OrderItems terkait //
+          },
+        },
+      });
+
+      // 4. Kurangi Stok Produk (Hanya untuk item terpilih)
+      for (const item of selectedCartItems) {
+        await tx.product.update({
+          //
+          where: { id: item.productId },
+          data: {
+            stock: {
+              decrement: item.quantity, //
+            },
+          },
+        });
+      }
+
+      // 5. Hapus HANYA item yang dipilih dari Keranjang User
+      await tx.cartItem.deleteMany({
+        //
+        where: {
+          id: { in: cartItemIds }, // ==> PERUBAHAN: Hapus hanya yang di-checkout //
+          userId: userId, // Pastikan hanya menghapus milik user ini
+        },
+      });
+
+      return newOrder; // Kembalikan order yang baru dibuat
+    });
+    // --- TRANSAKSI SELESAI ---
+
+    return res.status(201).json({ orderId: result.id }); //
+  } catch (err) {
+    console.error("Create order error:", err);
+    // Kirim pesan error spesifik jika stok tidak cukup atau item tidak valid
+    if (err.message.includes("Stok") || err.message.includes("tidak valid")) {
+      //
+      return res.status(400).json({ error: err.message });
+    }
+    return res.status(500).json({ error: "Gagal membuat pesanan" });
+  }
+});
+
+// 13. Get Order Details (Protected)
+app.get("/orders/:id", authMiddleware, async (req, res) => {
+  const userId = req.userId;
+  const orderId = parseInt(req.params.id);
+
+  if (isNaN(orderId)) {
+    return res.status(400).json({ error: "ID Order tidak valid" });
+  }
+
+  try {
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        //
+        items: {
+          // Sertakan item dalam order //
+          include: {
+            product: {
+              // Sertakan detail produk untuk setiap item //
+              select: { title: true, image: true },
+            },
+          },
+        },
+        user: {
+          // Sertakan info user (opsional, tapi berguna untuk alamat) //
+          select: {
+            name: true,
+            email: true,
+            address: true,
+            city: true,
+            phone: true,
+          },
+        },
+      },
+    });
+
+    // Pastikan order ada dan milik user yang sedang login
+    if (!order) {
+      return res.status(404).json({ error: "Order tidak ditemukan" });
+    }
+    if (order.userId !== userId) {
+      //
+      return res.status(403).json({ error: "Akses ditolak" }); //
+    }
+
+    return res.json(order);
+  } catch (err) {
+    console.error(`Get order ${orderId} error:`, err);
+    return res.status(500).json({ error: "Gagal mengambil detail order" });
+  }
+});
+
+// 14. Simulate Paying an Order (Protected)
+app.put("/orders/:id/pay", authMiddleware, async (req, res) => {
+  const userId = req.userId;
+  const orderId = parseInt(req.params.id);
+
+  if (isNaN(orderId)) {
+    return res.status(400).json({ error: "ID Order tidak valid" });
+  }
+
+  try {
+    // 1. Dapatkan order untuk memastikan milik user dan statusnya PENDING
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: "Order tidak ditemukan" });
+    }
+    if (order.userId !== userId) {
+      //
+      return res.status(403).json({ error: "Akses ditolak" }); //
+    }
+    if (order.status !== OrderStatus.PENDING) {
+      //
+      return res
+        .status(400)
+        .json({ error: `Order sudah dalam status ${order.status}` }); //
+    }
+
+    // 2. Update status order menjadi PAID
+    const updatedOrder = await prisma.order.update({
+      //
+      where: { id: orderId },
+      data: {
+        status: OrderStatus.PAID, //
+        // Di aplikasi nyata, Anda mungkin menyimpan detail transaksi di sini
+      },
+    });
+
+    // Kirim kembali order yang sudah diupdate
+    return res.json(updatedOrder);
+  } catch (err) {
+    console.error(`Simulate payment for order ${orderId} error:`, err);
+    return res.status(500).json({ error: "Gagal memproses pembayaran" });
+  }
+});
+
+// 15. Get User's Order History (Protected) - Menggunakan GET /orders
+app.get("/orders", authMiddleware, async (req, res) => {
+  const userId = req.userId; //
+
+  try {
+    const orders = await prisma.order.findMany({
+      //
+      where: { userId }, //
+      // Urutkan berdasarkan tanggal terbaru
+      orderBy: { createdAt: "desc" }, //
+      // Sertakan item untuk ringkasan (opsional, bisa juga hanya di detail)
+      include: {
+        //
+        items: {
+          take: 1, // Ambil 1 item saja untuk preview //
+          include: {
+            product: { select: { title: true, image: true } },
+          },
+        },
+      },
+    });
+
+    return res.json(orders); // Kirim daftar pesanan //
+  } catch (err) {
+    console.error(`Get order history for user ${userId} error:`, err);
+    return res.status(500).json({ error: "Gagal mengambil riwayat pesanan" });
   }
 });
 
@@ -422,4 +740,5 @@ app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
 });
 
+// Ekspor app untuk pengujian
 export default app;
