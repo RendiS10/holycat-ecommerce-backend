@@ -85,6 +85,22 @@ const authMiddleware = (req, res, next) => {
   }
 };
 
+// ==> TAMBAHKAN MIDDLEWARE BARU DI SINI <==
+// Middleware untuk proteksi rute ADMIN
+const adminAuthMiddleware = (req, res, next) => {
+  // Jalankan authMiddleware dulu untuk mendapatkan req.userId dan req.userRole
+  authMiddleware(req, res, () => {
+    // Setelah autentikasi, cek rolenya
+    if (req.userRole !== Role.ADMIN) {
+      return res
+        .status(403)
+        .json({ error: "Akses ditolak: Memerlukan hak Admin" });
+    }
+    // Jika admin, lanjutkan
+    next();
+  });
+};
+
 // ----------------------------------------------------------------------
 // -------------------------- AUTH ROUTES -------------------------------
 // ----------------------------------------------------------------------
@@ -729,6 +745,112 @@ app.get("/orders", authMiddleware, async (req, res) => {
   } catch (err) {
     console.error(`Get order history for user ${userId} error:`, err);
     return res.status(500).json({ error: "Gagal mengambil riwayat pesanan" });
+  }
+});
+// 15. Get User's Order History (Protected) - Menggunakan GET /orders
+app.get("/orders", authMiddleware, async (req, res) => {
+  // ... (kode Anda yang sudah ada) ...
+});
+
+// ==> 16. [BARU] Hapus Order (Protected) <==
+app.delete("/orders/:id", authMiddleware, async (req, res) => {
+  const userId = req.userId;
+  const orderId = parseInt(req.params.id);
+
+  if (isNaN(orderId)) {
+    return res.status(400).json({ error: "ID Order tidak valid" });
+  }
+
+  try {
+    // 1. Verifikasi bahwa order ini milik user yang sedang login
+    const order = await prisma.order.findFirst({
+      where: {
+        id: orderId,
+        userId: userId,
+      },
+    });
+
+    if (!order) {
+      // Jika order tidak ada, atau bukan milik user ini, kirim error
+      return res
+        .status(403)
+        .json({ error: "Akses ditolak atau order tidak ditemukan" });
+    }
+
+    // 2. Hapus order dalam transaksi
+    // Kita harus menghapus OrderItem terkait terlebih dahulu, baru Order-nya.
+    await prisma.$transaction(async (tx) => {
+      // Hapus semua item yang terkait dengan order ini
+      await tx.orderItem.deleteMany({
+        where: { orderId: orderId },
+      });
+
+      // Hapus order utamanya
+      await tx.order.delete({
+        where: { id: orderId },
+      });
+    });
+
+    return res.status(200).json({ message: "Order berhasil dihapus" });
+  } catch (err) {
+    console.error(`Gagal menghapus order ${orderId}:`, err);
+    return res.status(500).json({ error: "Gagal menghapus pesanan" });
+  }
+});
+// ----------------------------------------------------------------------
+// ------------------------- ADMIN ROUTES -------------------------------
+// ----------------------------------------------------------------------
+
+// 16. [ADMIN] Get All Orders
+app.get("/admin/orders", adminAuthMiddleware, async (req, res) => {
+  //
+  try {
+    const orders = await prisma.order.findMany({
+      orderBy: { createdAt: "desc" },
+      include: {
+        user: {
+          // Sertakan info user yang memesan
+          select: { name: true, email: true },
+        },
+      },
+    });
+    return res.json(orders);
+  } catch (err) {
+    console.error("Admin get all orders error:", err);
+    return res.status(500).json({ error: "Gagal mengambil daftar pesanan" });
+  }
+});
+
+// 17. [ADMIN] Update Order Status
+app.put("/admin/orders/:id/status", adminAuthMiddleware, async (req, res) => {
+  //
+  const orderId = parseInt(req.params.id);
+  const { status } = req.body; // Misal: "SHIPPED"
+
+  if (isNaN(orderId)) {
+    return res.status(400).json({ error: "ID Order tidak valid" });
+  }
+
+  // Validasi apakah status yang dikirim valid
+  if (!status || !Object.values(OrderStatus).includes(status)) {
+    return res.status(400).json({ error: "Status tidak valid" });
+  }
+
+  try {
+    const updatedOrder = await prisma.order.update({
+      where: { id: orderId },
+      data: {
+        status: status,
+      },
+    });
+    return res.json(updatedOrder);
+  } catch (err) {
+    console.error(`Admin update order ${orderId} error:`, err);
+    // Tangani jika order tidak ditemukan
+    if (err.code === "P2025") {
+      return res.status(404).json({ error: "Order tidak ditemukan" });
+    }
+    return res.status(500).json({ error: "Gagal memperbarui status pesanan" });
   }
 });
 
