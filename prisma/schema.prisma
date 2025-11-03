@@ -62,14 +62,15 @@ model CartItem {
 }
 
 model Order {
-  id        Int      @id @default(autoincrement())
-  user      User     @relation(fields: [userId], references: [id])
-  userId    Int
-  createdAt DateTime @default(now())
-  total     Float 
-  status        OrderStatus @default(PENDING)
-  paymentMethod PaymentMethod? 
-  items     OrderItem[]
+  id              Int           @id @default(autoincrement())
+  user            User          @relation(fields: [userId], references: [id])
+  userId          Int
+  createdAt       DateTime      @default(now())
+  total           Float
+  status          OrderStatus   @default(Menunggu_Pembayaran) // Default baru
+  paymentMethod   PaymentMethod?
+  paymentProofUrl String?       // <-- TAMBAHKAN INI (untuk bukti bayar)
+  items           OrderItem[]
   @@index([userId])
 }
 
@@ -86,11 +87,12 @@ model OrderItem {
 }
 
 enum OrderStatus {
-  PENDING
-  PAID
-  SHIPPED
-  COMPLETED
-  CANCELLED 
+  Menunggu_Pembayaran // Untuk Bank Transfer / E-Wallet
+  Diproses            // Status awal COD / Setelah pembayaran dikonfirmasi
+  Dikemas
+  Dikirim
+  Selesai
+  Dibatalkan
 }
 
 enum PaymentMethod {
