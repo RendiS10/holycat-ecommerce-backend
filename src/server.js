@@ -14,7 +14,8 @@ import {
 // WAJIB: Import body dan validationResult dari express-validator
 import { body, validationResult } from "express-validator";
 
-// --- [BARU] Impor untuk File Upload ---
+// --- Impor untuk Midtrans & File Upload ---
+import midtransclient from "midtrans-client"; // Impor Midtrans
 import multer from "multer";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -27,10 +28,18 @@ const PORT = process.env.PORT || 4000;
 const JWT_SECRET = process.env.JWT_SECRET || "your_super_secret_key";
 const NODE_ENV = process.env.NODE_ENV || "development";
 
-// --- [BARU] Setup __dirname untuk ES Modules ---
+// --- Setup __dirname untuk ES Modules ---
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 // -------------------------------------------
+
+// --- Inisialisasi Midtrans Snap ---
+const snap = new midtransclient.Snap({
+  isProduction: false, // Set 'true' di mode produksi
+  serverKey: process.env.MIDTRANS_SERVER_KEY,
+  clientKey: process.env.MIDTRANS_CLIENT_KEY,
+});
+// ---------------------------------------
 
 // ----------------------------------------------------------------------
 // ---------------------------- MIDDLEWARES -----------------------------
@@ -39,8 +48,7 @@ const __dirname = path.dirname(__filename);
 app.use(express.json());
 app.use(cookieParser());
 
-// --- [BARU] Sajikan folder uploads secara statis ---
-// Ini membuat file di 'public/uploads' bisa diakses via http://localhost:4000/uploads/namafile.jpg
+// --- Sajikan folder uploads secara statis ---
 const uploadsDir = path.join(__dirname, "public/uploads");
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
@@ -67,7 +75,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// --- [BARU] Konfigurasi Multer (Penyimpanan File) ---
+// --- Konfigurasi Multer (Penyimpanan File) ---
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, uploadsDir); // Simpan di folder 'public/uploads'
@@ -105,11 +113,10 @@ const upload = multer({
 
 // Helper function to generate JWT
 const generateToken = (userId, role) => {
-  // Termasuk role di token
   return jwt.sign({ userId, role }, JWT_SECRET, { expiresIn: "7d" });
 };
 
-// Middleware untuk memverifikasi JWT dari cookie atau Authorization header
+// Middleware untuk memverifikasi JWT
 const authMiddleware = (req, res, next) => {
   let token = req.cookies.token;
 
@@ -127,7 +134,7 @@ const authMiddleware = (req, res, next) => {
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
     req.userId = decoded.userId;
-    req.userRole = decoded.role; // Ambil role dari token
+    req.userRole = decoded.role;
     next();
   } catch (err) {
     res.clearCookie("token", {
@@ -141,15 +148,12 @@ const authMiddleware = (req, res, next) => {
 
 // Middleware untuk proteksi rute ADMIN
 const adminAuthMiddleware = (req, res, next) => {
-  // Jalankan authMiddleware dulu untuk mendapatkan req.userId dan req.userRole
   authMiddleware(req, res, () => {
-    // Setelah autentikasi, cek rolenya
     if (req.userRole !== Role.ADMIN) {
       return res
         .status(403)
         .json({ error: "Akses ditolak: Memerlukan hak Admin" });
     }
-    // Jika admin, lanjutkan
     next();
   });
 };
@@ -157,12 +161,9 @@ const adminAuthMiddleware = (req, res, next) => {
 // ----------------------------------------------------------------------
 // -------------------------- AUTH ROUTES -------------------------------
 // ----------------------------------------------------------------------
-
-// 1. User Registration
 app.post(
   "/auth/register",
   [
-    // Validation menggunakan express-validator
     body("email").isEmail().withMessage("Email tidak valid."),
     body("password")
       .isLength({ min: 6 })
@@ -186,7 +187,7 @@ app.post(
           email,
           password: hashedPassword,
           name,
-          role: Role.CUSTOMER, // Otomatis CUSTOMER
+          role: Role.CUSTOMER,
           city,
           address,
           phone,
@@ -209,8 +210,6 @@ app.post(
     }
   }
 );
-
-// 2. User Login
 app.post("/auth/login", async (req, res) => {
   const { email, password } = req.body;
   try {
@@ -230,14 +229,12 @@ app.post("/auth/login", async (req, res) => {
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
     const { password: _, ...userWithoutPass } = user;
-    return res.json({ user: userWithoutPass, token }); // token for FE fallback
+    return res.json({ user: userWithoutPass, token });
   } catch (err) {
     console.error("Login error:", err);
     return res.status(500).json({ error: "Internal server error" });
   }
 });
-
-// 3. Get Authenticated User Info
 app.get("/auth/me", authMiddleware, async (req, res) => {
   try {
     const user = await prisma.user.findUnique({
@@ -262,8 +259,6 @@ app.get("/auth/me", authMiddleware, async (req, res) => {
     return res.status(500).json({ error: "Internal server error" });
   }
 });
-
-// 4. User Logout
 app.post("/auth/logout", (req, res) => {
   res.clearCookie("token", {
     httpOnly: true,
@@ -276,8 +271,6 @@ app.post("/auth/logout", (req, res) => {
 // ----------------------------------------------------------------------
 // -------------------------- P R O F I L E -----------------------------
 // ----------------------------------------------------------------------
-
-// 5. Update User Profile (Protected route - PUT /user/profile)
 app.put("/user/profile", authMiddleware, async (req, res) => {
   const userId = req.userId;
   const { name, city, address, phone } = req.body || {};
@@ -319,8 +312,6 @@ app.put("/user/profile", authMiddleware, async (req, res) => {
 // ----------------------------------------------------------------------
 // ------------------------ PRODUCT ROUTES ------------------------------
 // ----------------------------------------------------------------------
-
-// 6. Get All Products (Simplified)
 app.get("/products", async (req, res) => {
   try {
     const products = await prisma.product.findMany();
@@ -330,8 +321,6 @@ app.get("/products", async (req, res) => {
     return res.status(500).json({ error: "Internal server error" });
   }
 });
-
-// 7. Get Product by ID
 app.get("/products/:id", async (req, res) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid ID format" });
@@ -367,13 +356,11 @@ const getCartItemsForUser = async (userId) => {
 // 8. Get Cart Content (Protected route)
 app.get("/cart", authMiddleware, async (req, res) => {
   try {
-    const items = await getCartItemsForUser(req.userId); // Sekarang fungsi ini terdefinisi
-
+    const items = await getCartItemsForUser(req.userId);
     const subtotal = items.reduce(
       (sum, item) => sum + item.quantity * item.product.price,
       0
     );
-
     return res.json({ items, subtotal: subtotal.toFixed(2) });
   } catch (err) {
     console.error("Get cart error:", err);
@@ -506,12 +493,14 @@ app.post("/orders/create", authMiddleware, async (req, res) => {
   }
 
   try {
+    // Tentukan status awal
     const initialStatus =
       paymentMethod === PaymentMethod.COD
         ? OrderStatus.Diproses
         : OrderStatus.Menunggu_Pembayaran;
 
     const result = await prisma.$transaction(async (tx) => {
+      // 1. Ambil item keranjang yang dipilih
       const selectedCartItems = await tx.cartItem.findMany({
         where: {
           userId: userId,
@@ -531,6 +520,7 @@ app.post("/orders/create", authMiddleware, async (req, res) => {
       let totalOrderPrice = 0;
       const orderItemsData = [];
 
+      // 2. Validasi Stok & Hitung Total
       for (const item of selectedCartItems) {
         if (item.product.stock < item.quantity) {
           throw new Error(
@@ -545,11 +535,12 @@ app.post("/orders/create", authMiddleware, async (req, res) => {
         });
       }
 
+      // 3. Buat Order
       const newOrder = await tx.order.create({
         data: {
           userId: userId,
           total: totalOrderPrice,
-          status: initialStatus,
+          status: initialStatus, // Status awal baru
           paymentMethod: paymentMethod,
           items: {
             create: orderItemsData,
@@ -557,6 +548,7 @@ app.post("/orders/create", authMiddleware, async (req, res) => {
         },
       });
 
+      // 4. Kurangi Stok Produk
       for (const item of selectedCartItems) {
         await tx.product.update({
           where: { id: item.productId },
@@ -568,6 +560,7 @@ app.post("/orders/create", authMiddleware, async (req, res) => {
         });
       }
 
+      // 5. Hapus item yang dipilih dari Keranjang
       await tx.cartItem.deleteMany({
         where: {
           id: { in: cartItemIds },
@@ -626,6 +619,7 @@ app.get("/orders/:id", authMiddleware, async (req, res) => {
       return res.status(404).json({ error: "Order tidak ditemukan" });
     }
 
+    // Validasi: Hanya user pemilik ATAU admin yang boleh lihat
     if (order.userId !== userId && req.userRole !== Role.ADMIN) {
       return res.status(403).json({ error: "Akses ditolak" });
     }
@@ -637,7 +631,7 @@ app.get("/orders/:id", authMiddleware, async (req, res) => {
   }
 });
 
-// 14. [MODIFIKASI] Customer: Submit Payment Proof (File Upload)
+// 14. Customer: Submit Payment Proof (File Upload)
 app.put(
   "/orders/:id/submit-proof",
   authMiddleware,
@@ -652,6 +646,7 @@ app.put(
         .json({ error: "File bukti pembayaran tidak ditemukan." });
     }
 
+    // Buat URL yang bisa diakses publik
     const paymentProofUrl = `http://localhost:${PORT}/uploads/${req.file.filename}`;
 
     if (isNaN(orderId)) {
@@ -664,12 +659,16 @@ app.put(
       });
 
       if (!order) {
+        // Hapus file jika order tidak valid
+        fs.unlink(req.file.path, () => {});
         return res
           .status(403)
           .json({ error: "Akses ditolak atau order tidak ditemukan" });
       }
 
       if (order.status !== OrderStatus.Menunggu_Pembayaran) {
+        // Hapus file jika status tidak valid
+        fs.unlink(req.file.path, () => {});
         return res
           .status(400)
           .json({ error: "Tidak dapat mengunggah bukti untuk pesanan ini." });
@@ -699,6 +698,7 @@ app.put(
       return res.json(updatedOrder);
     } catch (err) {
       console.error(`Submit proof for order ${orderId} error:`, err);
+      // Hapus file jika terjadi error DB
       fs.unlink(req.file.path, (unlinkErr) => {
         if (unlinkErr)
           console.error(
@@ -711,7 +711,7 @@ app.put(
   }
 );
 
-// 15. [MODIFIKASI] Customer: Cancel Order
+// 15. Customer: Cancel Order (MODIFIKASI alur status)
 app.put("/orders/:id/cancel", authMiddleware, async (req, res) => {
   const userId = req.userId;
   const orderId = parseInt(req.params.id);
@@ -722,6 +722,7 @@ app.put("/orders/:id/cancel", authMiddleware, async (req, res) => {
 
   try {
     const updatedOrder = await prisma.$transaction(async (tx) => {
+      // 1. Validasi order
       const order = await tx.order.findFirst({
         where: { id: orderId, userId: userId },
         include: { items: true },
@@ -731,6 +732,7 @@ app.put("/orders/:id/cancel", authMiddleware, async (req, res) => {
         throw new Error("Akses ditolak atau order tidak ditemukan");
       }
 
+      // 2. Logika Pembatalan Baru
       const canCancel =
         (order.paymentMethod !== PaymentMethod.COD &&
           order.status === OrderStatus.Menunggu_Pembayaran) ||
@@ -743,6 +745,7 @@ app.put("/orders/:id/cancel", authMiddleware, async (req, res) => {
         );
       }
 
+      // 3. Kembalikan stok produk
       for (const item of order.items) {
         await tx.product.update({
           where: { id: item.productId },
@@ -750,6 +753,7 @@ app.put("/orders/:id/cancel", authMiddleware, async (req, res) => {
         });
       }
 
+      // 4. Update status order
       const cancelledOrder = await tx.order.update({
         where: { id: orderId },
         data: { status: OrderStatus.Dibatalkan },
@@ -807,7 +811,7 @@ app.get("/orders", authMiddleware, async (req, res) => {
   }
 });
 
-// 17. [MODIFIKASI] Customer: Hapus Order (Hanya jika Selesai / Dibatalkan)
+// 17. Customer: Hapus Order (Hanya jika Selesai / Dibatalkan)
 app.delete("/orders/:id", authMiddleware, async (req, res) => {
   const userId = req.userId;
   const orderId = parseInt(req.params.id);
@@ -817,6 +821,7 @@ app.delete("/orders/:id", authMiddleware, async (req, res) => {
   }
 
   try {
+    // 1. Verifikasi kepemilikan DAN status
     const order = await prisma.order.findFirst({
       where: { id: orderId, userId: userId },
     });
@@ -836,6 +841,7 @@ app.delete("/orders/:id", authMiddleware, async (req, res) => {
       });
     }
 
+    // 3. Hapus order
     await prisma.$transaction(async (tx) => {
       await tx.orderItem.deleteMany({
         where: { orderId: orderId },
@@ -853,10 +859,176 @@ app.delete("/orders/:id", authMiddleware, async (req, res) => {
 });
 
 // ----------------------------------------------------------------------
+// -------------------- PAYMENT ROUTES (MIDTRANS) -----------------------
+// ----------------------------------------------------------------------
+
+// 18. POST /payments/create (Tugas 13.2)
+app.post("/payments/create", authMiddleware, async (req, res) => {
+  const userId = req.userId;
+  const { orderId } = req.body;
+
+  if (!orderId) {
+    return res.status(400).json({ error: "Order ID tidak valid" });
+  }
+
+  try {
+    // 1. Ambil data order DARI DATABASE
+    const order = await prisma.order.findFirst({
+      where: { id: orderId, userId: userId },
+      include: {
+        user: true,
+        items: {
+          include: { product: true },
+        },
+      },
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: "Order tidak ditemukan" });
+    }
+
+    if (order.status !== OrderStatus.Menunggu_Pembayaran) {
+      return res.status(400).json({
+        error: `Pesanan ini berstatus ${order.status} dan tidak dapat dibayar.`,
+      });
+    }
+
+    // 2. Siapkan parameter untuk Midtrans Snap
+    let parameter = {
+      transaction_details: {
+        order_id: `HOLYCAT-${order.id}-${Date.now()}`, // Buat order_id unik
+        gross_amount: Math.round(order.total), // Midtrans butuh integer
+      },
+      item_details: order.items.map((item) => ({
+        id: item.productId.toString(),
+        price: Math.round(item.price),
+        quantity: item.quantity,
+        name: item.product.title.substring(0, 50),
+      })),
+      customer_details: {
+        first_name: order.user.name,
+        email: order.user.email,
+        phone: order.user.phone || undefined,
+        billing_address: {
+          first_name: order.user.name,
+          address: order.user.address || "N/A",
+          city: order.user.city || "N/A",
+          phone: order.user.phone || undefined,
+        },
+      },
+      callbacks: {
+        finish: `${
+          process.env.FRONTEND_ORIGIN || "http://localhost:3000"
+        }/order/${order.id}`,
+      },
+    };
+
+    // 3. Buat transaksi Snap
+    const transaction = await snap.createTransaction(parameter);
+
+    // 4. Kirim token transaksi kembali ke frontend
+    return res.status(201).json({
+      token: transaction.token,
+      redirect_url: transaction.redirect_url,
+    });
+  } catch (err) {
+    console.error("Midtrans create payment error:", err);
+    return res.status(500).json({ error: "Gagal membuat sesi pembayaran" });
+  }
+});
+
+// 19. POST /payments/notify (Tugas 13.3 & 13.4)
+app.post("/payments/notify", async (req, res) => {
+  const notificationJson = req.body;
+
+  console.log(
+    "Menerima notifikasi Midtrans:",
+    JSON.stringify(notificationJson, null, 2)
+  );
+
+  try {
+    // 1. Verifikasi notifikasi dari Midtrans
+    const statusResponse = await snap.transaction.notification(
+      notificationJson
+    );
+    let order_id = statusResponse.order_id;
+    let transaction_status = statusResponse.transaction_status;
+    let fraud_status = statusResponse.fraud_status;
+
+    // Ekstrak ID order asli
+    const orderIdParts = order_id.split("-");
+    if (orderIdParts[0] !== "HOLYCAT" || !orderIdParts[1]) {
+      console.error("Format Order ID tidak dikenal:", order_id);
+      return res.status(400).send("Format Order ID tidak dikenal.");
+    }
+    const dbOrderId = parseInt(orderIdParts[1]);
+
+    console.log(
+      `Transaksi ${order_id} (DB ID: ${dbOrderId}): ${transaction_status}`
+    );
+
+    // 2. Cari order di database
+    const order = await prisma.order.findUnique({ where: { id: dbOrderId } });
+    if (!order) {
+      console.error(`Order ${dbOrderId} tidak ditemukan di database.`);
+      return res.status(404).send("Order tidak ditemukan.");
+    }
+
+    // 3. Update status order
+    let newStatus = order.status;
+
+    if (transaction_status == "capture" || transaction_status == "settlement") {
+      if (fraud_status == "accept") {
+        newStatus = OrderStatus.Diproses;
+      } else if (fraud_status == "challenge") {
+        newStatus = OrderStatus.Menunggu_Pembayaran;
+      }
+    } else if (
+      transaction_status == "cancel" ||
+      transaction_status == "expire" ||
+      transaction_status == "deny"
+    ) {
+      newStatus = OrderStatus.Dibatalkan;
+
+      // Kembalikan stok jika gagal/dibatalkan
+      if (order.status !== OrderStatus.Dibatalkan) {
+        const orderItems = await prisma.orderItem.findMany({
+          where: { orderId: dbOrderId },
+        });
+        await prisma.$transaction(
+          orderItems.map((item) =>
+            prisma.product.update({
+              where: { id: item.productId },
+              data: { stock: { increment: item.quantity } },
+            })
+          )
+        );
+        console.log(`Stok untuk Order ${dbOrderId} telah dikembalikan.`);
+      }
+    }
+
+    // 4. Simpan status baru jika ada perubahan
+    if (newStatus !== order.status) {
+      await prisma.order.update({
+        where: { id: dbOrderId },
+        data: { status: newStatus },
+      });
+      console.log(`Order ${dbOrderId} status diupdate ke ${newStatus}`);
+    }
+
+    // 5. Kirim respons 200 OK ke Midtrans
+    return res.status(200).send("Notifikasi diterima.");
+  } catch (err) {
+    console.error("Gagal memproses notifikasi Midtrans:", err.message);
+    return res.status(500).send("Internal Server Error");
+  }
+});
+
+// ----------------------------------------------------------------------
 // ------------------------- ADMIN ROUTES -------------------------------
 // ----------------------------------------------------------------------
 
-// 18. [ADMIN] Get All Orders
+// 20. [ADMIN] Get All Orders
 app.get("/admin/orders", adminAuthMiddleware, async (req, res) => {
   try {
     const orders = await prisma.order.findMany({
@@ -874,10 +1046,10 @@ app.get("/admin/orders", adminAuthMiddleware, async (req, res) => {
   }
 });
 
-// 19. [ADMIN] Update Order Status
+// 21. [ADMIN] Update Order Status (MODIFIKASI - Tugas 14)
 app.put("/admin/orders/:id/status", adminAuthMiddleware, async (req, res) => {
   const orderId = parseInt(req.params.id);
-  const { status } = req.body;
+  const { status, trackingNumber, courier } = req.body;
 
   if (isNaN(orderId)) {
     return res.status(400).json({ error: "ID Order tidak valid" });
@@ -888,11 +1060,26 @@ app.put("/admin/orders/:id/status", adminAuthMiddleware, async (req, res) => {
   }
 
   try {
+    const updateData = {
+      status: status,
+    };
+
+    // [LOGIKA BARU] Jika status diubah menjadi "Dikirim"
+    if (status === OrderStatus.Dikirim) {
+      if (!trackingNumber || !courier) {
+        return res.status(400).json({
+          error:
+            "Nomor resi dan kurir wajib diisi saat mengubah status ke 'Dikirim'.",
+        });
+      }
+      updateData.trackingNumber = trackingNumber;
+      updateData.courier = courier;
+      updateData.shippedAt = new Date(); // Catat waktu pengiriman
+    }
+
     const updatedOrder = await prisma.order.update({
       where: { id: orderId },
-      data: {
-        status: status,
-      },
+      data: updateData,
     });
     return res.json(updatedOrder);
   } catch (err) {

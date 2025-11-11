@@ -67,9 +67,12 @@ model Order {
   userId          Int
   createdAt       DateTime      @default(now())
   total           Float
-  status          OrderStatus   @default(Menunggu_Pembayaran) // Default baru
+  status          OrderStatus   @default(Menunggu_Pembayaran)
   paymentMethod   PaymentMethod?
-  paymentProofUrl String?       // <-- TAMBAHKAN INI (untuk bukti bayar)
+  paymentProofUrl String?
+  trackingNumber  String?
+  courier         String?
+  shippedAt       DateTime?    
   items           OrderItem[]
   @@index([userId])
 }
