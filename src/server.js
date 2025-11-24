@@ -20,6 +20,8 @@ import multer from "multer";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
+// --- [BARU] Impor Email Service ---
+import { sendOrderStatusEmail } from "./emailService.js";
 // ------------------------------------
 
 const prisma = new PrismaClient();
@@ -340,7 +342,7 @@ app.get("/products/:id", async (req, res) => {
 // ------------------------- CART ROUTES --------------------------------
 // ----------------------------------------------------------------------
 
-// [FIX] Helper: Mendapatkan item keranjang user
+// Helper: Mendapatkan item keranjang user
 const getCartItemsForUser = async (userId) => {
   return prisma.cartItem.findMany({
     where: { userId },
@@ -568,10 +570,21 @@ app.post("/orders/create", authMiddleware, async (req, res) => {
         },
       });
 
-      return newOrder;
-    });
+      // [BARU] Ambil data user untuk email (di dalam transaksi)
+      const orderUser = await tx.user.findUnique({ where: { id: userId } });
 
-    return res.status(201).json({ orderId: result.id });
+      // Kembalikan order DAN user
+      return { newOrder, orderUser };
+    });
+    // --- TRANSAKSI SELESAI ---
+
+    // [BARU] Kirim email SETELAH transaksi sukses
+    if (result.newOrder && result.orderUser) {
+      // Kirim email non-blocking (tidak perlu await)
+      sendOrderStatusEmail(result.newOrder, result.orderUser);
+    }
+
+    return res.status(201).json({ orderId: result.newOrder.id }); // Kirim ID order
   } catch (err) {
     console.error("Create order error:", err);
     if (err.message.includes("Stok") || err.message.includes("tidak valid")) {
@@ -775,6 +788,10 @@ app.put("/orders/:id/cancel", authMiddleware, async (req, res) => {
       return cancelledOrder;
     });
 
+    // [BARU] Kirim email
+    // updatedOrder berisi data order DAN user
+    sendOrderStatusEmail(updatedOrder, updatedOrder.user);
+
     return res.json(updatedOrder);
   } catch (err) {
     console.error(`Gagal membatalkan order ${orderId}:`, err);
@@ -862,7 +879,7 @@ app.delete("/orders/:id", authMiddleware, async (req, res) => {
 // -------------------- PAYMENT ROUTES (MIDTRANS) -----------------------
 // ----------------------------------------------------------------------
 
-// 18. POST /payments/create (Tugas 13.2)
+// 18. POST /payments/create (Tugas 13.2) - UPDATE HITUNGAN HARGA
 app.post("/payments/create", authMiddleware, async (req, res) => {
   const userId = req.userId;
   const { orderId } = req.body;
@@ -893,18 +910,27 @@ app.post("/payments/create", authMiddleware, async (req, res) => {
       });
     }
 
-    // 2. Siapkan parameter untuk Midtrans Snap
+    // 2. [PERBAIKAN] Siapkan item_details terlebih dahulu dan bulatkan harga
+    const item_details = order.items.map((item) => ({
+      id: item.productId.toString(),
+      price: Math.round(item.price), // Bulatkan harga per item agar sesuai dengan Midtrans
+      quantity: item.quantity,
+      name: item.product.title.substring(0, 50), // Midtrans membatasi panjang nama 50 char
+    }));
+
+    // 3. [PERBAIKAN] Hitung ulang gross_amount dari item_details
+    // Ini memastikan total harga SAMA PERSIS dengan jumlah item, mencegah Error 500
+    const calculatedGrossAmount = item_details.reduce((sum, item) => {
+      return sum + item.price * item.quantity;
+    }, 0);
+
+    // 4. Siapkan parameter untuk Midtrans Snap
     let parameter = {
       transaction_details: {
-        order_id: `HOLYCAT-${order.id}-${Date.now()}`, // Buat order_id unik
-        gross_amount: Math.round(order.total), // Midtrans butuh integer
+        order_id: `HOLYCAT-${order.id}-${Date.now()}`, // Order ID unik
+        gross_amount: calculatedGrossAmount, // Gunakan hasil hitung ulang, BUKAN order.total
       },
-      item_details: order.items.map((item) => ({
-        id: item.productId.toString(),
-        price: Math.round(item.price),
-        quantity: item.quantity,
-        name: item.product.title.substring(0, 50),
-      })),
+      item_details: item_details,
       customer_details: {
         first_name: order.user.name,
         email: order.user.email,
@@ -923,17 +949,26 @@ app.post("/payments/create", authMiddleware, async (req, res) => {
       },
     };
 
-    // 3. Buat transaksi Snap
+    // 5. Buat transaksi Snap
     const transaction = await snap.createTransaction(parameter);
 
-    // 4. Kirim token transaksi kembali ke frontend
+    // 6. Kirim token transaksi kembali ke frontend
     return res.status(201).json({
       token: transaction.token,
       redirect_url: transaction.redirect_url,
     });
   } catch (err) {
-    console.error("Midtrans create payment error:", err);
-    return res.status(500).json({ error: "Gagal membuat sesi pembayaran" });
+    // Log error detail dari Midtrans untuk debugging
+    console.error(
+      "Midtrans Create Error Detail:",
+      JSON.stringify(err, null, 2)
+    );
+    console.error("Pesan Error:", err.message);
+
+    return res.status(500).json({
+      error:
+        "Gagal membuat sesi pembayaran. Cek terminal backend untuk detail.",
+    });
   }
 });
 
@@ -1009,10 +1044,20 @@ app.post("/payments/notify", async (req, res) => {
 
     // 4. Simpan status baru jika ada perubahan
     if (newStatus !== order.status) {
-      await prisma.order.update({
+      const updatedOrder = await prisma.order.update({
+        // [MODIFIKASI]
         where: { id: dbOrderId },
         data: { status: newStatus },
       });
+
+      // [BARU] Kirim email
+      const orderUser = await prisma.user.findUnique({
+        where: { id: updatedOrder.userId },
+      });
+      if (orderUser) {
+        sendOrderStatusEmail(updatedOrder, orderUser);
+      }
+
       console.log(`Order ${dbOrderId} status diupdate ke ${newStatus}`);
     }
 
@@ -1081,6 +1126,16 @@ app.put("/admin/orders/:id/status", adminAuthMiddleware, async (req, res) => {
       where: { id: orderId },
       data: updateData,
     });
+
+    // [BARU] Kirim email
+    const orderUser = await prisma.user.findUnique({
+      where: { id: updatedOrder.userId },
+    });
+    if (orderUser) {
+      // Kirim data order yang sudah terupdate (termasuk info resi)
+      sendOrderStatusEmail(updatedOrder, orderUser);
+    }
+
     return res.json(updatedOrder);
   } catch (err) {
     console.error(`Admin update order ${orderId} error:`, err);
