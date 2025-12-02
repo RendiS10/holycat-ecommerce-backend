@@ -338,6 +338,95 @@ app.get("/products/:id", async (req, res) => {
   }
 });
 
+// ... (setelah endpoint GET /products/:id)
+
+// 22. [ADMIN] Create Product (Tugas 18.1)
+app.post("/products", adminAuthMiddleware, async (req, res) => {
+  const { title, description, price, stock, image, category } = req.body;
+
+  // Validasi sederhana
+  if (!title || !price || !category) {
+    return res
+      .status(400)
+      .json({ error: "Judul, harga, dan kategori wajib diisi." });
+  }
+
+  // Validasi Enum Category
+  if (!Object.values(Category).includes(category)) {
+    return res.status(400).json({ error: "Kategori tidak valid." });
+  }
+
+  try {
+    const product = await prisma.product.create({
+      data: {
+        title,
+        description,
+        price: parseFloat(price),
+        stock: parseInt(stock) || 0,
+        image: image || "/images/product_01.png", // Default image jika kosong
+        category: category,
+      },
+    });
+    return res.status(201).json(product);
+  } catch (err) {
+    console.error("Create product error:", err);
+    return res.status(500).json({ error: "Gagal membuat produk." });
+  }
+});
+
+// 23. [ADMIN] Edit Product (Tugas 18.2)
+app.put("/products/:id", adminAuthMiddleware, async (req, res) => {
+  const id = parseInt(req.params.id);
+  const { title, description, price, stock, image, category } = req.body;
+
+  if (isNaN(id))
+    return res.status(400).json({ error: "ID Produk tidak valid" });
+
+  try {
+    const product = await prisma.product.update({
+      where: { id },
+      data: {
+        title,
+        description,
+        price: price ? parseFloat(price) : undefined,
+        stock: stock ? parseInt(stock) : undefined,
+        image,
+        category,
+      },
+    });
+    return res.json(product);
+  } catch (err) {
+    console.error("Update product error:", err);
+    if (err.code === "P2025")
+      return res.status(404).json({ error: "Produk tidak ditemukan" });
+    return res.status(500).json({ error: "Gagal mengupdate produk." });
+  }
+});
+
+// 24. [ADMIN] Delete Product (Tugas 18.3)
+app.delete("/products/:id", adminAuthMiddleware, async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id))
+    return res.status(400).json({ error: "ID Produk tidak valid" });
+
+  try {
+    await prisma.product.delete({ where: { id } });
+    return res.json({ message: "Produk berhasil dihapus" });
+  } catch (err) {
+    console.error("Delete product error:", err);
+    // P2003 adalah kode error Prisma untuk pelanggaran Foreign Key (produk masih ada di cart/order)
+    if (err.code === "P2003") {
+      return res.status(400).json({
+        error:
+          "Tidak bisa menghapus produk yang sudah pernah dipesan atau ada di keranjang user.",
+      });
+    }
+    if (err.code === "P2025")
+      return res.status(404).json({ error: "Produk tidak ditemukan" });
+    return res.status(500).json({ error: "Gagal menghapus produk." });
+  }
+});
+
 // ----------------------------------------------------------------------
 // ------------------------- CART ROUTES --------------------------------
 // ----------------------------------------------------------------------
@@ -1072,7 +1161,54 @@ app.post("/payments/notify", async (req, res) => {
 // ----------------------------------------------------------------------
 // ------------------------- ADMIN ROUTES -------------------------------
 // ----------------------------------------------------------------------
+// 22. [BARU] Get Admin Dashboard Stats (Tugas 17.4)
+app.get("/admin/stats", adminAuthMiddleware, async (req, res) => {
+  try {
+    // Hitung total user
+    const totalUsers = await prisma.user.count();
 
+    // Hitung total order
+    const totalOrders = await prisma.order.count();
+
+    // Hitung total pendapatan (hanya dari pesanan yang sudah dibayar/selesai)
+    const paidOrders = await prisma.order.aggregate({
+      _sum: {
+        total: true,
+      },
+      where: {
+        status: {
+          in: [
+            OrderStatus.Diproses,
+            OrderStatus.Dikemas,
+            OrderStatus.Dikirim,
+            OrderStatus.Selesai,
+          ],
+        },
+      },
+    });
+
+    // Hitung total produk
+    const totalProducts = await prisma.product.count();
+
+    // Ambil 5 pesanan terbaru
+    const recentOrders = await prisma.order.findMany({
+      take: 5,
+      orderBy: { createdAt: "desc" },
+      include: { user: { select: { name: true } } },
+    });
+
+    return res.json({
+      totalUsers,
+      totalOrders,
+      totalRevenue: paidOrders._sum.total || 0,
+      totalProducts,
+      recentOrders,
+    });
+  } catch (err) {
+    console.error("Admin stats error:", err);
+    return res.status(500).json({ error: "Gagal memuat statistik dashboard." });
+  }
+});
 // 20. [ADMIN] Get All Orders
 app.get("/admin/orders", adminAuthMiddleware, async (req, res) => {
   try {
@@ -1145,6 +1281,74 @@ app.put("/admin/orders/:id/status", adminAuthMiddleware, async (req, res) => {
     return res.status(500).json({ error: "Gagal memperbarui status pesanan" });
   }
 });
+
+// ... (kode sebelumnya)
+
+// 22. [ADMIN] Get Report Data (Tugas 19.1)
+app.get("/admin/reports/orders", adminAuthMiddleware, async (req, res) => {
+  const { startDate, endDate, status } = req.query;
+
+  try {
+    // Bangun filter query
+    let whereClause = {};
+
+    // Filter Tanggal
+    if (startDate && endDate) {
+      whereClause.createdAt = {
+        gte: new Date(startDate), // Mulai dari tanggal ini 00:00
+        lte: new Date(new Date(endDate).setHours(23, 59, 59)), // Sampai tanggal ini 23:59
+      };
+    }
+
+    // Filter Status (Opsional)
+    if (status && status !== "ALL") {
+      whereClause.status = status;
+    }
+
+    // Ambil data dari DB
+    const orders = await prisma.order.findMany({
+      where: whereClause,
+      orderBy: { createdAt: "asc" }, // Urutkan dari lama ke baru untuk grafik
+      include: {
+        user: {
+          select: { name: true, email: true },
+        },
+        items: {
+          include: {
+            product: { select: { title: true } },
+          },
+        },
+      },
+    });
+
+    // Hitung Ringkasan
+    const totalRevenue = orders.reduce((sum, order) => {
+      // Hanya hitung revenue jika status valid (bukan dibatalkan/pending)
+      if (
+        order.status !== "Dibatalkan" &&
+        order.status !== "Menunggu_Pembayaran"
+      ) {
+        return sum + order.total;
+      }
+      return sum;
+    }, 0);
+
+    const totalOrders = orders.length;
+
+    return res.json({
+      summary: {
+        totalOrders,
+        totalRevenue,
+      },
+      orders,
+    });
+  } catch (err) {
+    console.error("Report error:", err);
+    return res.status(500).json({ error: "Gagal memuat laporan." });
+  }
+});
+
+// ... (kode endpoint /health dan app.listen)
 
 // Health endpoint
 app.get("/health", (req, res) => res.json({ ok: true }));
