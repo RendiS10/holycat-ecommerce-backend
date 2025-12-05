@@ -58,7 +58,7 @@ if (!fs.existsSync(uploadsDir)) {
 app.use("/uploads", express.static(uploadsDir));
 // ------------------------------------------------
 
-// Custom CORS middleware (Tidak berubah)
+// Custom CORS middleware
 app.use((req, res, next) => {
   const allowedOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
   const origin = req.headers.origin;
@@ -80,10 +80,9 @@ app.use((req, res, next) => {
 // --- Konfigurasi Multer (Penyimpanan File) ---
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, uploadsDir); // Simpan di folder 'public/uploads'
+    cb(null, uploadsDir);
   },
   filename: (req, file, cb) => {
-    // Buat nama file unik: order-[id]-[timestamp].jpg
     const orderId = req.params.id || "unknown";
     const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
     const extension = path.extname(file.originalname);
@@ -93,7 +92,6 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage: storage,
-  // Filter hanya gambar
   fileFilter: (req, file, cb) => {
     const filetypes = /jpeg|jpg|png|gif/;
     const mimetype = filetypes.test(file.mimetype);
@@ -111,7 +109,6 @@ const upload = multer({
   },
   limits: { fileSize: 5 * 1024 * 1024 }, // Batas 5MB
 });
-// -------------------------------------------------
 
 // Helper function to generate JWT
 const generateToken = (userId, role) => {
@@ -315,14 +312,29 @@ app.put("/user/profile", authMiddleware, async (req, res) => {
 // ------------------------ PRODUCT ROUTES ------------------------------
 // ----------------------------------------------------------------------
 app.get("/products", async (req, res) => {
+  // Ambil search query
+  const { search } = req.query;
   try {
-    const products = await prisma.product.findMany();
+    const whereClause = search
+      ? {
+          OR: [
+            { title: { contains: search, mode: "insensitive" } },
+            { description: { contains: search, mode: "insensitive" } },
+          ],
+        }
+      : {};
+
+    const products = await prisma.product.findMany({
+      where: whereClause,
+      orderBy: { createdAt: "desc" },
+    });
     return res.json(products);
   } catch (err) {
     console.error("Get products error:", err);
     return res.status(500).json({ error: "Internal server error" });
   }
 });
+
 app.get("/products/:id", async (req, res) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: "Invalid ID format" });
@@ -338,20 +350,15 @@ app.get("/products/:id", async (req, res) => {
   }
 });
 
-// ... (setelah endpoint GET /products/:id)
-
-// 22. [ADMIN] Create Product (Tugas 18.1)
+// 22. [ADMIN] Create Product
 app.post("/products", adminAuthMiddleware, async (req, res) => {
   const { title, description, price, stock, image, category } = req.body;
 
-  // Validasi sederhana
   if (!title || !price || !category) {
     return res
       .status(400)
       .json({ error: "Judul, harga, dan kategori wajib diisi." });
   }
-
-  // Validasi Enum Category
   if (!Object.values(Category).includes(category)) {
     return res.status(400).json({ error: "Kategori tidak valid." });
   }
@@ -363,7 +370,7 @@ app.post("/products", adminAuthMiddleware, async (req, res) => {
         description,
         price: parseFloat(price),
         stock: parseInt(stock) || 0,
-        image: image || "/images/product_01.png", // Default image jika kosong
+        image: image || "/images/product_01.png",
         category: category,
       },
     });
@@ -374,7 +381,7 @@ app.post("/products", adminAuthMiddleware, async (req, res) => {
   }
 });
 
-// 23. [ADMIN] Edit Product (Tugas 18.2)
+// 23. [ADMIN] Edit Product
 app.put("/products/:id", adminAuthMiddleware, async (req, res) => {
   const id = parseInt(req.params.id);
   const { title, description, price, stock, image, category } = req.body;
@@ -403,7 +410,7 @@ app.put("/products/:id", adminAuthMiddleware, async (req, res) => {
   }
 });
 
-// 24. [ADMIN] Delete Product (Tugas 18.3)
+// 24. [ADMIN] Delete Product
 app.delete("/products/:id", adminAuthMiddleware, async (req, res) => {
   const id = parseInt(req.params.id);
   if (isNaN(id))
@@ -414,7 +421,6 @@ app.delete("/products/:id", adminAuthMiddleware, async (req, res) => {
     return res.json({ message: "Produk berhasil dihapus" });
   } catch (err) {
     console.error("Delete product error:", err);
-    // P2003 adalah kode error Prisma untuk pelanggaran Foreign Key (produk masih ada di cart/order)
     if (err.code === "P2003") {
       return res.status(400).json({
         error:
@@ -444,7 +450,6 @@ const getCartItemsForUser = async (userId) => {
   });
 };
 
-// 8. Get Cart Content (Protected route)
 app.get("/cart", authMiddleware, async (req, res) => {
   try {
     const items = await getCartItemsForUser(req.userId);
@@ -459,7 +464,6 @@ app.get("/cart", authMiddleware, async (req, res) => {
   }
 });
 
-// 9. Add/Update Item in Cart (Protected route)
 app.post("/cart/add", authMiddleware, async (req, res) => {
   const { productId, quantity = 1 } = req.body;
   const userId = req.userId;
@@ -483,7 +487,7 @@ app.post("/cart/add", authMiddleware, async (req, res) => {
     const futureQuantity = currentQuantityInCart + quantityToAdd;
     if (product.stock < futureQuantity) {
       return res.status(400).json({
-        error: `Stok ${product.title} tidak mencukupi (tersisa ${product.stock}, Anda mencoba menambahkan ${quantityToAdd} ke ${currentQuantityInCart} yang sudah ada).`,
+        error: `Stok ${product.title} tidak mencukupi (tersisa ${product.stock}).`,
       });
     }
     if (existing) {
@@ -503,7 +507,6 @@ app.post("/cart/add", authMiddleware, async (req, res) => {
   }
 });
 
-// 10. Update cart item quantity (Protected route)
 app.put("/cart/update/:id", authMiddleware, async (req, res) => {
   const id = parseInt(req.params.id);
   const { quantity } = req.body;
@@ -536,7 +539,6 @@ app.put("/cart/update/:id", authMiddleware, async (req, res) => {
   }
 });
 
-// 11. Remove cart item (Protected route)
 app.delete("/cart/remove/:id", authMiddleware, async (req, res) => {
   const id = parseInt(req.params.id);
   const userId = req.userId;
@@ -567,7 +569,7 @@ app.delete("/cart/remove/:id", authMiddleware, async (req, res) => {
 // ------------------------- ORDER ROUTES -------------------------------
 // ----------------------------------------------------------------------
 
-// 12. Create Order from Cart (MODIFIKASI alur status)
+// 12. Create Order from Cart
 app.post("/orders/create", authMiddleware, async (req, res) => {
   const userId = req.userId;
   const { paymentMethod, cartItemIds } = req.body;
@@ -584,14 +586,12 @@ app.post("/orders/create", authMiddleware, async (req, res) => {
   }
 
   try {
-    // Tentukan status awal
     const initialStatus =
       paymentMethod === PaymentMethod.COD
         ? OrderStatus.Diproses
         : OrderStatus.Menunggu_Pembayaran;
 
     const result = await prisma.$transaction(async (tx) => {
-      // 1. Ambil item keranjang yang dipilih
       const selectedCartItems = await tx.cartItem.findMany({
         where: {
           userId: userId,
@@ -611,7 +611,6 @@ app.post("/orders/create", authMiddleware, async (req, res) => {
       let totalOrderPrice = 0;
       const orderItemsData = [];
 
-      // 2. Validasi Stok & Hitung Total
       for (const item of selectedCartItems) {
         if (item.product.stock < item.quantity) {
           throw new Error(
@@ -626,12 +625,11 @@ app.post("/orders/create", authMiddleware, async (req, res) => {
         });
       }
 
-      // 3. Buat Order
       const newOrder = await tx.order.create({
         data: {
           userId: userId,
           total: totalOrderPrice,
-          status: initialStatus, // Status awal baru
+          status: initialStatus,
           paymentMethod: paymentMethod,
           items: {
             create: orderItemsData,
@@ -639,7 +637,6 @@ app.post("/orders/create", authMiddleware, async (req, res) => {
         },
       });
 
-      // 4. Kurangi Stok Produk
       for (const item of selectedCartItems) {
         await tx.product.update({
           where: { id: item.productId },
@@ -651,7 +648,6 @@ app.post("/orders/create", authMiddleware, async (req, res) => {
         });
       }
 
-      // 5. Hapus item yang dipilih dari Keranjang
       await tx.cartItem.deleteMany({
         where: {
           id: { in: cartItemIds },
@@ -659,21 +655,17 @@ app.post("/orders/create", authMiddleware, async (req, res) => {
         },
       });
 
-      // [BARU] Ambil data user untuk email (di dalam transaksi)
+      // [PEMICU EMAIL] Ambil data user untuk email
       const orderUser = await tx.user.findUnique({ where: { id: userId } });
-
-      // Kembalikan order DAN user
       return { newOrder, orderUser };
     });
-    // --- TRANSAKSI SELESAI ---
 
-    // [BARU] Kirim email SETELAH transaksi sukses
+    // [PEMICU EMAIL] Kirim email SETELAH transaksi sukses
     if (result.newOrder && result.orderUser) {
-      // Kirim email non-blocking (tidak perlu await)
       sendOrderStatusEmail(result.newOrder, result.orderUser);
     }
 
-    return res.status(201).json({ orderId: result.newOrder.id }); // Kirim ID order
+    return res.status(201).json({ orderId: result.newOrder.id });
   } catch (err) {
     console.error("Create order error:", err);
     if (err.message.includes("Stok") || err.message.includes("tidak valid")) {
@@ -683,7 +675,7 @@ app.post("/orders/create", authMiddleware, async (req, res) => {
   }
 });
 
-// 13. Get Order Details (MODIFIKASI: Admin juga bisa lihat)
+// 13. Get Order Details
 app.get("/orders/:id", authMiddleware, async (req, res) => {
   const userId = req.userId;
   const orderId = parseInt(req.params.id);
@@ -721,7 +713,6 @@ app.get("/orders/:id", authMiddleware, async (req, res) => {
       return res.status(404).json({ error: "Order tidak ditemukan" });
     }
 
-    // Validasi: Hanya user pemilik ATAU admin yang boleh lihat
     if (order.userId !== userId && req.userRole !== Role.ADMIN) {
       return res.status(403).json({ error: "Akses ditolak" });
     }
@@ -733,7 +724,7 @@ app.get("/orders/:id", authMiddleware, async (req, res) => {
   }
 });
 
-// 14. Customer: Submit Payment Proof (File Upload)
+// 14. Submit Payment Proof (Manual Upload)
 app.put(
   "/orders/:id/submit-proof",
   authMiddleware,
@@ -748,7 +739,6 @@ app.put(
         .json({ error: "File bukti pembayaran tidak ditemukan." });
     }
 
-    // Buat URL yang bisa diakses publik
     const paymentProofUrl = `http://localhost:${PORT}/uploads/${req.file.filename}`;
 
     if (isNaN(orderId)) {
@@ -761,7 +751,6 @@ app.put(
       });
 
       if (!order) {
-        // Hapus file jika order tidak valid
         fs.unlink(req.file.path, () => {});
         return res
           .status(403)
@@ -769,7 +758,6 @@ app.put(
       }
 
       if (order.status !== OrderStatus.Menunggu_Pembayaran) {
-        // Hapus file jika status tidak valid
         fs.unlink(req.file.path, () => {});
         return res
           .status(400)
@@ -800,7 +788,6 @@ app.put(
       return res.json(updatedOrder);
     } catch (err) {
       console.error(`Submit proof for order ${orderId} error:`, err);
-      // Hapus file jika terjadi error DB
       fs.unlink(req.file.path, (unlinkErr) => {
         if (unlinkErr)
           console.error(
@@ -813,7 +800,7 @@ app.put(
   }
 );
 
-// 15. Customer: Cancel Order (MODIFIKASI alur status)
+// 15. Customer: Cancel Order
 app.put("/orders/:id/cancel", authMiddleware, async (req, res) => {
   const userId = req.userId;
   const orderId = parseInt(req.params.id);
@@ -824,7 +811,6 @@ app.put("/orders/:id/cancel", authMiddleware, async (req, res) => {
 
   try {
     const updatedOrder = await prisma.$transaction(async (tx) => {
-      // 1. Validasi order
       const order = await tx.order.findFirst({
         where: { id: orderId, userId: userId },
         include: { items: true },
@@ -834,7 +820,6 @@ app.put("/orders/:id/cancel", authMiddleware, async (req, res) => {
         throw new Error("Akses ditolak atau order tidak ditemukan");
       }
 
-      // 2. Logika Pembatalan Baru
       const canCancel =
         (order.paymentMethod !== PaymentMethod.COD &&
           order.status === OrderStatus.Menunggu_Pembayaran) ||
@@ -847,7 +832,6 @@ app.put("/orders/:id/cancel", authMiddleware, async (req, res) => {
         );
       }
 
-      // 3. Kembalikan stok produk
       for (const item of order.items) {
         await tx.product.update({
           where: { id: item.productId },
@@ -855,7 +839,6 @@ app.put("/orders/:id/cancel", authMiddleware, async (req, res) => {
         });
       }
 
-      // 4. Update status order
       const cancelledOrder = await tx.order.update({
         where: { id: orderId },
         data: { status: OrderStatus.Dibatalkan },
@@ -877,8 +860,7 @@ app.put("/orders/:id/cancel", authMiddleware, async (req, res) => {
       return cancelledOrder;
     });
 
-    // [BARU] Kirim email
-    // updatedOrder berisi data order DAN user
+    // [PEMICU EMAIL] Pesanan Dibatalkan
     sendOrderStatusEmail(updatedOrder, updatedOrder.user);
 
     return res.json(updatedOrder);
@@ -917,7 +899,7 @@ app.get("/orders", authMiddleware, async (req, res) => {
   }
 });
 
-// 17. Customer: Hapus Order (Hanya jika Selesai / Dibatalkan)
+// 17. Customer: Hapus Order
 app.delete("/orders/:id", authMiddleware, async (req, res) => {
   const userId = req.userId;
   const orderId = parseInt(req.params.id);
@@ -927,7 +909,6 @@ app.delete("/orders/:id", authMiddleware, async (req, res) => {
   }
 
   try {
-    // 1. Verifikasi kepemilikan DAN status
     const order = await prisma.order.findFirst({
       where: { id: orderId, userId: userId },
     });
@@ -947,7 +928,6 @@ app.delete("/orders/:id", authMiddleware, async (req, res) => {
       });
     }
 
-    // 3. Hapus order
     await prisma.$transaction(async (tx) => {
       await tx.orderItem.deleteMany({
         where: { orderId: orderId },
@@ -968,7 +948,7 @@ app.delete("/orders/:id", authMiddleware, async (req, res) => {
 // -------------------- PAYMENT ROUTES (MIDTRANS) -----------------------
 // ----------------------------------------------------------------------
 
-// 18. POST /payments/create (Tugas 13.2) - UPDATE HITUNGAN HARGA
+// 18. POST /payments/create - (SUDAH DIPERBAIKI)
 app.post("/payments/create", authMiddleware, async (req, res) => {
   const userId = req.userId;
   const { orderId } = req.body;
@@ -978,7 +958,6 @@ app.post("/payments/create", authMiddleware, async (req, res) => {
   }
 
   try {
-    // 1. Ambil data order DARI DATABASE
     const order = await prisma.order.findFirst({
       where: { id: orderId, userId: userId },
       include: {
@@ -999,25 +978,23 @@ app.post("/payments/create", authMiddleware, async (req, res) => {
       });
     }
 
-    // 2. [PERBAIKAN] Siapkan item_details terlebih dahulu dan bulatkan harga
+    // Siapkan item details dan bulatkan harga (Pencegahan Error 500)
     const item_details = order.items.map((item) => ({
       id: item.productId.toString(),
-      price: Math.round(item.price), // Bulatkan harga per item agar sesuai dengan Midtrans
+      price: Math.round(item.price),
       quantity: item.quantity,
-      name: item.product.title.substring(0, 50), // Midtrans membatasi panjang nama 50 char
+      name: item.product.title.substring(0, 50),
     }));
 
-    // 3. [PERBAIKAN] Hitung ulang gross_amount dari item_details
-    // Ini memastikan total harga SAMA PERSIS dengan jumlah item, mencegah Error 500
+    // Hitung ulang gross_amount dari item details
     const calculatedGrossAmount = item_details.reduce((sum, item) => {
       return sum + item.price * item.quantity;
     }, 0);
 
-    // 4. Siapkan parameter untuk Midtrans Snap
     let parameter = {
       transaction_details: {
-        order_id: `HOLYCAT-${order.id}-${Date.now()}`, // Order ID unik
-        gross_amount: calculatedGrossAmount, // Gunakan hasil hitung ulang, BUKAN order.total
+        order_id: `HOLYCAT-${order.id}-${Date.now()}`,
+        gross_amount: calculatedGrossAmount,
       },
       item_details: item_details,
       customer_details: {
@@ -1038,30 +1015,21 @@ app.post("/payments/create", authMiddleware, async (req, res) => {
       },
     };
 
-    // 5. Buat transaksi Snap
     const transaction = await snap.createTransaction(parameter);
 
-    // 6. Kirim token transaksi kembali ke frontend
     return res.status(201).json({
       token: transaction.token,
       redirect_url: transaction.redirect_url,
     });
   } catch (err) {
-    // Log error detail dari Midtrans untuk debugging
-    console.error(
-      "Midtrans Create Error Detail:",
-      JSON.stringify(err, null, 2)
-    );
-    console.error("Pesan Error:", err.message);
-
+    console.error("Midtrans create payment error:", err?.message || err);
     return res.status(500).json({
-      error:
-        "Gagal membuat sesi pembayaran. Cek terminal backend untuk detail.",
+      error: "Gagal membuat sesi pembayaran. Cek terminal backend.",
     });
   }
 });
 
-// 19. POST /payments/notify (Tugas 13.3 & 13.4)
+// 19. POST /payments/notify (Webhook)
 app.post("/payments/notify", async (req, res) => {
   const notificationJson = req.body;
 
@@ -1071,7 +1039,6 @@ app.post("/payments/notify", async (req, res) => {
   );
 
   try {
-    // 1. Verifikasi notifikasi dari Midtrans
     const statusResponse = await snap.transaction.notification(
       notificationJson
     );
@@ -1079,7 +1046,6 @@ app.post("/payments/notify", async (req, res) => {
     let transaction_status = statusResponse.transaction_status;
     let fraud_status = statusResponse.fraud_status;
 
-    // Ekstrak ID order asli
     const orderIdParts = order_id.split("-");
     if (orderIdParts[0] !== "HOLYCAT" || !orderIdParts[1]) {
       console.error("Format Order ID tidak dikenal:", order_id);
@@ -1091,21 +1057,17 @@ app.post("/payments/notify", async (req, res) => {
       `Transaksi ${order_id} (DB ID: ${dbOrderId}): ${transaction_status}`
     );
 
-    // 2. Cari order di database
     const order = await prisma.order.findUnique({ where: { id: dbOrderId } });
     if (!order) {
       console.error(`Order ${dbOrderId} tidak ditemukan di database.`);
       return res.status(404).send("Order tidak ditemukan.");
     }
 
-    // 3. Update status order
     let newStatus = order.status;
 
     if (transaction_status == "capture" || transaction_status == "settlement") {
       if (fraud_status == "accept") {
         newStatus = OrderStatus.Diproses;
-      } else if (fraud_status == "challenge") {
-        newStatus = OrderStatus.Menunggu_Pembayaran;
       }
     } else if (
       transaction_status == "cancel" ||
@@ -1113,8 +1075,6 @@ app.post("/payments/notify", async (req, res) => {
       transaction_status == "deny"
     ) {
       newStatus = OrderStatus.Dibatalkan;
-
-      // Kembalikan stok jika gagal/dibatalkan
       if (order.status !== OrderStatus.Dibatalkan) {
         const orderItems = await prisma.orderItem.findMany({
           where: { orderId: dbOrderId },
@@ -1131,15 +1091,13 @@ app.post("/payments/notify", async (req, res) => {
       }
     }
 
-    // 4. Simpan status baru jika ada perubahan
     if (newStatus !== order.status) {
       const updatedOrder = await prisma.order.update({
-        // [MODIFIKASI]
         where: { id: dbOrderId },
         data: { status: newStatus },
       });
 
-      // [BARU] Kirim email
+      // [PEMICU EMAIL] Status Pembayaran Berubah
       const orderUser = await prisma.user.findUnique({
         where: { id: updatedOrder.userId },
       });
@@ -1150,7 +1108,6 @@ app.post("/payments/notify", async (req, res) => {
       console.log(`Order ${dbOrderId} status diupdate ke ${newStatus}`);
     }
 
-    // 5. Kirim respons 200 OK ke Midtrans
     return res.status(200).send("Notifikasi diterima.");
   } catch (err) {
     console.error("Gagal memproses notifikasi Midtrans:", err.message);
@@ -1161,16 +1118,12 @@ app.post("/payments/notify", async (req, res) => {
 // ----------------------------------------------------------------------
 // ------------------------- ADMIN ROUTES -------------------------------
 // ----------------------------------------------------------------------
-// 22. [BARU] Get Admin Dashboard Stats (Tugas 17.4)
+
+// 22. Get Admin Dashboard Stats
 app.get("/admin/stats", adminAuthMiddleware, async (req, res) => {
   try {
-    // Hitung total user
     const totalUsers = await prisma.user.count();
-
-    // Hitung total order
     const totalOrders = await prisma.order.count();
-
-    // Hitung total pendapatan (hanya dari pesanan yang sudah dibayar/selesai)
     const paidOrders = await prisma.order.aggregate({
       _sum: {
         total: true,
@@ -1186,11 +1139,7 @@ app.get("/admin/stats", adminAuthMiddleware, async (req, res) => {
         },
       },
     });
-
-    // Hitung total produk
     const totalProducts = await prisma.product.count();
-
-    // Ambil 5 pesanan terbaru
     const recentOrders = await prisma.order.findMany({
       take: 5,
       orderBy: { createdAt: "desc" },
@@ -1206,10 +1155,11 @@ app.get("/admin/stats", adminAuthMiddleware, async (req, res) => {
     });
   } catch (err) {
     console.error("Admin stats error:", err);
-    return res.status(500).json({ error: "Gagal memuat statistik dashboard." });
+    return res.status(500).json({ error: "Gagal memuat statistik." });
   }
 });
-// 20. [ADMIN] Get All Orders
+
+// 20. Get All Orders
 app.get("/admin/orders", adminAuthMiddleware, async (req, res) => {
   try {
     const orders = await prisma.order.findMany({
@@ -1227,7 +1177,7 @@ app.get("/admin/orders", adminAuthMiddleware, async (req, res) => {
   }
 });
 
-// 21. [ADMIN] Update Order Status (MODIFIKASI - Tugas 14)
+// 21. Update Order Status
 app.put("/admin/orders/:id/status", adminAuthMiddleware, async (req, res) => {
   const orderId = parseInt(req.params.id);
   const { status, trackingNumber, courier } = req.body;
@@ -1235,7 +1185,6 @@ app.put("/admin/orders/:id/status", adminAuthMiddleware, async (req, res) => {
   if (isNaN(orderId)) {
     return res.status(400).json({ error: "ID Order tidak valid" });
   }
-
   if (!status || !Object.values(OrderStatus).includes(status)) {
     return res.status(400).json({ error: "Status tidak valid" });
   }
@@ -1245,7 +1194,6 @@ app.put("/admin/orders/:id/status", adminAuthMiddleware, async (req, res) => {
       status: status,
     };
 
-    // [LOGIKA BARU] Jika status diubah menjadi "Dikirim"
     if (status === OrderStatus.Dikirim) {
       if (!trackingNumber || !courier) {
         return res.status(400).json({
@@ -1255,7 +1203,7 @@ app.put("/admin/orders/:id/status", adminAuthMiddleware, async (req, res) => {
       }
       updateData.trackingNumber = trackingNumber;
       updateData.courier = courier;
-      updateData.shippedAt = new Date(); // Catat waktu pengiriman
+      updateData.shippedAt = new Date();
     }
 
     const updatedOrder = await prisma.order.update({
@@ -1263,12 +1211,11 @@ app.put("/admin/orders/:id/status", adminAuthMiddleware, async (req, res) => {
       data: updateData,
     });
 
-    // [BARU] Kirim email
+    // [PEMICU EMAIL] Status Update oleh Admin
     const orderUser = await prisma.user.findUnique({
       where: { id: updatedOrder.userId },
     });
     if (orderUser) {
-      // Kirim data order yang sudah terupdate (termasuk info resi)
       sendOrderStatusEmail(updatedOrder, orderUser);
     }
 
@@ -1282,48 +1229,34 @@ app.put("/admin/orders/:id/status", adminAuthMiddleware, async (req, res) => {
   }
 });
 
-// ... (kode sebelumnya)
-
-// 22. [ADMIN] Get Report Data (Tugas 19.1)
+// 23. Get Report Data
 app.get("/admin/reports/orders", adminAuthMiddleware, async (req, res) => {
   const { startDate, endDate, status } = req.query;
 
   try {
-    // Bangun filter query
     let whereClause = {};
 
-    // Filter Tanggal
     if (startDate && endDate) {
       whereClause.createdAt = {
-        gte: new Date(startDate), // Mulai dari tanggal ini 00:00
-        lte: new Date(new Date(endDate).setHours(23, 59, 59)), // Sampai tanggal ini 23:59
+        gte: new Date(startDate),
+        lte: new Date(new Date(endDate).setHours(23, 59, 59)),
       };
     }
 
-    // Filter Status (Opsional)
     if (status && status !== "ALL") {
       whereClause.status = status;
     }
 
-    // Ambil data dari DB
     const orders = await prisma.order.findMany({
       where: whereClause,
-      orderBy: { createdAt: "asc" }, // Urutkan dari lama ke baru untuk grafik
+      orderBy: { createdAt: "asc" },
       include: {
-        user: {
-          select: { name: true, email: true },
-        },
-        items: {
-          include: {
-            product: { select: { title: true } },
-          },
-        },
+        user: { select: { name: true, email: true } },
+        items: { include: { product: { select: { title: true } } } },
       },
     });
 
-    // Hitung Ringkasan
     const totalRevenue = orders.reduce((sum, order) => {
-      // Hanya hitung revenue jika status valid (bukan dibatalkan/pending)
       if (
         order.status !== "Dibatalkan" &&
         order.status !== "Menunggu_Pembayaran"
@@ -1336,10 +1269,7 @@ app.get("/admin/reports/orders", adminAuthMiddleware, async (req, res) => {
     const totalOrders = orders.length;
 
     return res.json({
-      summary: {
-        totalOrders,
-        totalRevenue,
-      },
+      summary: { totalOrders, totalRevenue },
       orders,
     });
   } catch (err) {
@@ -1348,14 +1278,26 @@ app.get("/admin/reports/orders", adminAuthMiddleware, async (req, res) => {
   }
 });
 
-// ... (kode endpoint /health dan app.listen)
-
 // Health endpoint
 app.get("/health", (req, res) => res.json({ ok: true }));
 
 // Start server
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
+
+  // LOG DEBUGGING UNTUK MEMASTIKAN KUNCI TERBACA
+  console.log("-------------------------------------------");
+  console.log("🔍 Cek Konfigurasi Midtrans:");
+  console.log("- Mode:", process.env.NODE_ENV);
+  console.log("- Server Key Ada?", !!process.env.MIDTRANS_SERVER_KEY);
+  console.log("- Client Key Ada?", !!process.env.MIDTRANS_CLIENT_KEY);
+  if (process.env.MIDTRANS_SERVER_KEY) {
+    console.log(
+      "- Awalan Server Key:",
+      process.env.MIDTRANS_SERVER_KEY.substring(0, 5) + "..."
+    );
+  }
+  console.log("-------------------------------------------");
 });
 
 export default app;
