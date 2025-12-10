@@ -311,23 +311,32 @@ app.put("/user/profile", authMiddleware, async (req, res) => {
 // ----------------------------------------------------------------------
 // ------------------------ PRODUCT ROUTES ------------------------------
 // ----------------------------------------------------------------------
+// 6. Get All Products (Updated with Search & Category)
 app.get("/products", async (req, res) => {
-  // Ambil search query
-  const { search } = req.query;
+  const { search, category } = req.query; // Ambil parameter search DAN category
+
   try {
-    const whereClause = search
-      ? {
-          OR: [
-            { title: { contains: search, mode: "insensitive" } },
-            { description: { contains: search, mode: "insensitive" } },
-          ],
-        }
-      : {};
+    // Bangun filter query dinamis
+    const whereClause = {};
+
+    // Filter Pencarian (Search)
+    if (search) {
+      whereClause.OR = [
+        { title: { contains: search, mode: "insensitive" } },
+        { description: { contains: search, mode: "insensitive" } },
+      ];
+    }
+
+    // Filter Kategori (Category)
+    if (category) {
+      whereClause.category = category;
+    }
 
     const products = await prisma.product.findMany({
       where: whereClause,
       orderBy: { createdAt: "desc" },
     });
+
     return res.json(products);
   } catch (err) {
     console.error("Get products error:", err);
