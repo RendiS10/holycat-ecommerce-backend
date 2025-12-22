@@ -1,0 +1,13 @@
+{
+  "spec": [
+    "test/health.test.js",
+    "test/auth.test.js",
+    "test/cart.test.js",
+    "test/products.test.js",
+    "test/orders.test.js",
+    "test/payment.test.js",
+    "test/integration.test.js"
+  ],
+  "exit": true,
+  "timeout": 10000
+}

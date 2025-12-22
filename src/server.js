@@ -2,7 +2,7 @@ import "dotenv/config";
 import express from "express";
 import cookieParser from "cookie-parser";
 import jwt from "jsonwebtoken";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
 // WAJIB: Import PrismaClient dan Enum dari @prisma/client
 import {
   PrismaClient,
@@ -60,10 +60,14 @@ app.use("/uploads", express.static(uploadsDir));
 
 // Custom CORS middleware
 app.use((req, res, next) => {
-  const allowedOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
+  const allowedOrigins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000 , process.env.FRONTEND_ORIGIN ",
+  ];
   const origin = req.headers.origin;
-  if (allowedOrigins.includes(origin)) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
+  if (allowedOrigins.includes(origin) || !origin) {
+    // !origin untuk postman/server-to-server
+    res.setHeader("Access-Control-Allow-Origin", origin || "*");
   }
   res.setHeader("Access-Control-Allow-Credentials", true);
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");

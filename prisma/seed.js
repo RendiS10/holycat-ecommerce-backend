@@ -1,234 +1,132 @@
-// holycat-e-commerce/ecommerce-backend/prisma/seed.js
-
-// PERBAIKAN SINTAKS: Mengimpor PrismaClient, Role, dan Category
+// ecommerce-backend/prisma/seed.js
 import { PrismaClient, Role, Category } from "@prisma/client";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs"; // Pakai bcryptjs agar tidak macet di Windows
 
 const prisma = new PrismaClient();
 
 async function main() {
+  console.log("🚀 [1/4] Memulai proses seeding...");
+
+  // 1. Bersihkan database lama
+  console.log("🧹 [2/4] Membersihkan data lama...");
+  try {
+    await prisma.orderItem.deleteMany();
+    await prisma.order.deleteMany();
+    await prisma.cartItem.deleteMany();
+    await prisma.cart.deleteMany();
+    await prisma.product.deleteMany();
+    await prisma.user.deleteMany();
+  } catch (error) {
+    console.warn("⚠️  Data lama sudah bersih atau tabel belum ada.");
+  }
+
+  // 2. Siapkan Data Produk (Rupiah)
+  console.log("📦 [3/4] Menyiapkan data produk Rupiah...");
   const products = [
-    // Kategori: Produk Lainnya
     {
-      title: "Kucing Lucu",
-      description: "Patung kucing lucu.",
-      price: 9.99,
+      title: "Royal Canin Kitten 2kg",
+      description:
+        "Makanan kering premium khusus untuk anak kucing usia 4-12 bulan.",
+      price: 285000,
       image: "/images/product_01.png",
       stock: 50,
-      category: Category.Produk_Lainnya,
+      category: Category.Makanan || "Produk_Lainnya",
     },
     {
-      title: "Mainan Kucing",
-      description: "Mainan berbulu untuk kucing.",
-      price: 4.5,
+      title: "Whiskas Tuna 1.2kg",
+      description: "Makanan kucing rasa tuna lezat dengan nutrisi lengkap.",
+      price: 65000,
       image: "/images/product_02.png",
-      stock: 120,
-      category: Category.Produk_Lainnya,
-    },
-    {
-      title: "Tempat Tidur",
-      description: "Tempat tidur empuk untuk kucing.",
-      price: 29.99,
-      image: "/images/product_04.png",
-      stock: 30,
-      category: Category.Produk_Lainnya,
-    },
-    {
-      title: "Kalung Kucing",
-      description: "Kalung lucu untuk kucing.",
-      price: 3.99,
-      image: "/images/product_05.png",
-      stock: 200,
-      category: Category.Grooming,
-    },
-    {
-      title: "Bola Berbulu Set",
-      description: "Satu set 5 bola berbulu warna-warni.",
-      price: 6.5,
-      image: "/images/product_06.png",
-      stock: 150,
-      category: Category.Produk_Lainnya,
-    },
-    {
-      title: "Kotak Pasir Tertutup",
-      description: "Kotak pasir besar dengan penutup untuk mengurangi bau.",
-      price: 45.99,
-      image: "/images/product_08.png",
-      stock: 20,
-      category: Category.Produk_Lainnya,
-    },
-    {
-      title: "Tas Ransel Transparan",
-      description: "Tas ransel pembawa kucing dengan jendela transparan.",
-      price: 55.0,
-      image: "/images/product_12.png",
-      stock: 15,
-      category: Category.Produk_Lainnya,
-    },
-    {
-      title: "Carrier Plastik Ringan",
-      description: "Box carrier plastik ringan dengan ventilasi.",
-      price: 35.0,
-      image: "/images/product_16.png",
-      stock: 25,
-      category: Category.Produk_Lainnya,
-    },
-    {
-      title: "Mangkuk Makan Otomatis",
-      description: "Dispenser makanan otomatis dengan timer.",
-      price: 65.0,
-      image: "/images/product_17.png",
-      stock: 18,
-      category: Category.Produk_Lainnya,
-    },
-    {
-      title: "Air Mancur Minum (Otomatis)",
-      description: "Air mancur minum elektrik 2 liter.",
-      price: 49.99,
-      image: "/images/product_18.png",
-      stock: 35,
-      category: Category.Produk_Lainnya,
-    },
-    {
-      title: "Tempat Cakar Tinggi",
-      description: "Pohon cakar tinggi dengan beberapa tingkat.",
-      price: 89.99,
-      image: "/images/product_20.png",
-      stock: 10,
-      category: Category.Produk_Lainnya,
-    },
-
-    // Kategori: Suplemen dan Vitamin
-    {
-      title: "Makanan Kucing",
-      description: "Makanan kucing berkualitas.",
-      price: 19.99,
-      image: "/images/product_03.png",
-      stock: 85,
-      category: Category.Suplemen_dan_Vitamin,
-    },
-    {
-      title: "Snack Ikan Kering (Isi 10)",
-      description: "Camilan ikan salmon kering alami.",
-      price: 15.0,
-      image: "/images/product_10.png",
       stock: 100,
-      category: Category.Suplemen_dan_Vitamin,
+      category: Category.Makanan || "Produk_Lainnya",
     },
     {
-      title: "Susu Khusus Kucing",
-      description: "Susu rendah laktosa, ideal untuk anak kucing.",
-      price: 11.5,
-      image: "/images/product_11.png",
-      stock: 60,
-      category: Category.Suplemen_dan_Vitamin,
-    },
-
-    // Kategori: Grooming
-    {
-      title: "Sisir Anti-Kutu",
-      description:
-        "Sisir stainless steel efektif menghilangkan kutu dan telur.",
-      price: 12.0,
-      image: "/images/product_07.png",
-      stock: 75,
-      category: Category.Grooming,
+      title: "Me-O Creamy Treats (4x15g)",
+      description: "Camilan kucing creamy rasa Salmon.",
+      price: 22000,
+      image: "/images/product_03.png",
+      stock: 200,
+      category: Category.Makanan || "Produk_Lainnya",
     },
     {
-      title: "Baju Hangat Kucing",
-      description: "Baju rajut hangat untuk kucing tanpa bulu.",
-      price: 18.0,
-      image: "/images/product_13.png",
+      title: "Obat Kutu Detick 1ml",
+      description: "Obat tetes kutu ampuh untuk kucing berat 1-10kg.",
+      price: 35000,
+      image: "/images/product_04.png",
+      stock: 150,
+      category: Category.Obat || "Produk_Lainnya",
+    },
+    {
+      title: "Vitamin Nutri-Plus Gel",
+      description: "Suplemen energi tinggi untuk kucing masa pertumbuhan.",
+      price: 145000,
+      image: "/images/product_05.png",
+      stock: 30,
+      category: Category.Suplemen_dan_Vitamin || "Produk_Lainnya",
+    },
+    {
+      title: "Pasir Kucing Wangi 10L",
+      description: "Pasir bentonite gumpal wangi lavender.",
+      price: 55000,
+      image: "/images/product_06.png",
       stock: 40,
-      category: Category.Grooming,
+      category: Category.Grooming || "Produk_Lainnya",
     },
     {
-      title: "Sikat Gigi Kucing Set",
-      description: "Sikat gigi jari dan sikat panjang.",
-      price: 9.0,
-      image: "/images/product_14.png",
-      stock: 110,
-      category: Category.Grooming,
+      title: "Sampo Anti Jamur 250ml",
+      description: "Sampo khusus mengatasi jamur dan masalah kulit.",
+      price: 45000,
+      image: "/images/product_07.png",
+      stock: 60,
+      category: Category.Grooming || "Produk_Lainnya",
     },
     {
-      title: "Shampo Kucing Anti Jamur",
-      description: "Shampo khusus untuk mengatasi jamur.",
-      price: 22.5,
-      image: "/images/product_19.png",
-      stock: 70,
-      category: Category.Grooming,
-    },
-
-    // Kategori: Obat
-    {
-      title: "Deodorizer Pasir Kucing",
-      description: "Bubuk deodorizer dengan aroma lavender.",
-      price: 7.5,
-      image: "/images/product_09.png",
-      stock: 180,
-      category: Category.Obat,
-    },
-    {
-      title: "Pasta Gigi Rasa Ayam",
-      description: "Pasta gigi enzimatis rasa ayam.",
-      price: 8.5,
-      image: "/images/product_15.png",
-      stock: 95,
-      category: Category.Obat,
+      title: "Mainan Tongkat Bulu",
+      description: "Mainan interaktif untuk melatih insting berburu.",
+      price: 15000,
+      image: "/images/product_08.png",
+      stock: 80,
+      category: Category.Produk_Lainnya,
     },
   ];
 
-  // Seed products using createMany (skipDuplicates avoids errors if titles already exist)
+  // Masukkan data produk
   await prisma.product.createMany({
     data: products,
     skipDuplicates: true,
   });
 
-  // --- LOGIKA TEST USER ADMIN ---
-  const testEmail = "test@example.com";
-  const testPassword = "secret";
-  const existingUser = await prisma.user.findUnique({
-    where: { email: testEmail },
+  // 3. Buat Admin & User
+  console.log("👤 [4/4] Membuat User Admin...");
+  const hashedPassword = await bcrypt.hash("secret", 10);
+
+  const existingAdmin = await prisma.user.findUnique({
+    where: { email: "test@example.com" },
   });
 
-  const adminData = {
-    role: Role.ADMIN,
-    city: "Jakarta Pusat",
-    address: "Jalan Merdeka No. 101, Komplek Admin",
-    phone: "08123456789",
-  };
-
-  if (!existingUser) {
-    const hash = await bcrypt.hash(testPassword, 10);
+  if (!existingAdmin) {
     await prisma.user.create({
       data: {
-        email: testEmail,
-        password: hash,
-        name: "Admin User",
-        ...adminData,
+        name: "Admin Holycat",
+        email: "test@example.com",
+        password: hashedPassword,
+        role: Role.ADMIN || "ADMIN",
+        city: "Jakarta Pusat",
+        address: "Jalan Admin No. 1",
+        phone: "08123456789",
       },
     });
-    console.log("Created test user: test@example.com (ADMIN) / secret");
+    console.log("✅ Admin berhasil dibuat: test@example.com / secret");
   } else {
-    if (existingUser.role !== Role.ADMIN || !existingUser.city) {
-      await prisma.user.update({
-        where: { email: testEmail },
-        data: adminData,
-      });
-      console.log(
-        "Updated existing test user to ADMIN role and added address details."
-      );
-    } else {
-      console.log("Test user already exists and has complete ADMIN details.");
-    }
+    console.log("ℹ️ Admin sudah ada.");
   }
 
-  console.log("Seed finished.");
+  console.log("🎉 SEEDING SELESAI! Silakan cek pgAdmin.");
 }
 
 main()
-  .catch(async (e) => {
-    console.error(e);
+  .catch((e) => {
+    console.error("❌ Error:", e);
     process.exit(1);
   })
   .finally(async () => {
