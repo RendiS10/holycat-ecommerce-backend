@@ -1,6 +1,5 @@
-// ecommerce-backend/prisma/seed.js
 import { PrismaClient, Role, Category } from "@prisma/client";
-import bcrypt from "bcryptjs"; // Pakai bcryptjs agar tidak macet di Windows
+import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
@@ -22,6 +21,8 @@ async function main() {
 
   // 2. Siapkan Data Produk (Rupiah)
   console.log("📦 [3/4] Menyiapkan data produk Rupiah...");
+
+  // --- DATA ASLI (Menggunakan Enum Category) ---
   const products = [
     {
       title: "Royal Canin Kitten 2kg",
@@ -30,7 +31,7 @@ async function main() {
       price: 285000,
       image: "/images/product_01.png",
       stock: 50,
-      category: Category.Makanan || "Produk_Lainnya",
+      category: Category.Makanan, // Pastikan ini Enum, bukan string
     },
     {
       title: "Whiskas Tuna 1.2kg",
@@ -38,7 +39,7 @@ async function main() {
       price: 65000,
       image: "/images/product_02.png",
       stock: 100,
-      category: Category.Makanan || "Produk_Lainnya",
+      category: Category.Makanan,
     },
     {
       title: "Me-O Creamy Treats (4x15g)",
@@ -46,7 +47,7 @@ async function main() {
       price: 22000,
       image: "/images/product_03.png",
       stock: 200,
-      category: Category.Makanan || "Produk_Lainnya",
+      category: Category.Makanan,
     },
     {
       title: "Obat Kutu Detick 1ml",
@@ -54,7 +55,7 @@ async function main() {
       price: 35000,
       image: "/images/product_04.png",
       stock: 150,
-      category: Category.Obat || "Produk_Lainnya",
+      category: Category.Obat,
     },
     {
       title: "Vitamin Nutri-Plus Gel",
@@ -62,7 +63,7 @@ async function main() {
       price: 145000,
       image: "/images/product_05.png",
       stock: 30,
-      category: Category.Suplemen_dan_Vitamin || "Produk_Lainnya",
+      category: Category.Suplemen_dan_Vitamin,
     },
     {
       title: "Pasir Kucing Wangi 10L",
@@ -70,7 +71,7 @@ async function main() {
       price: 55000,
       image: "/images/product_06.png",
       stock: 40,
-      category: Category.Grooming || "Produk_Lainnya",
+      category: Category.Grooming,
     },
     {
       title: "Sampo Anti Jamur 250ml",
@@ -78,7 +79,7 @@ async function main() {
       price: 45000,
       image: "/images/product_07.png",
       stock: 60,
-      category: Category.Grooming || "Produk_Lainnya",
+      category: Category.Grooming,
     },
     {
       title: "Mainan Tongkat Bulu",
@@ -90,7 +91,62 @@ async function main() {
     },
   ];
 
-  // Masukkan data produk
+  // --- TAMBAHAN: GENERATE 32 DATA DUMMY ---
+  console.log("➕ Menambahkan 32 produk dummy tambahan...");
+
+  const brands = [
+    "Pro Plan",
+    "Equilibrio",
+    "Bolt",
+    "Ori Cat",
+    "Friskies",
+    "Excel",
+    "Maxi",
+    "Kitchen Flavor",
+  ];
+  const types = [
+    "Adult",
+    "Kitten",
+    "Hair & Skin",
+    "Urinary",
+    "Mother & Baby",
+    "Persian",
+  ];
+
+  // FIX: Array berisi NILAI ENUM ASLI, bukan string
+  const availableCategories = [
+    Category.Makanan,
+    Category.Obat,
+    Category.Suplemen_dan_Vitamin,
+    Category.Grooming,
+    Category.Produk_Lainnya,
+  ];
+
+  for (let i = 1; i <= 32; i++) {
+    const brand = brands[Math.floor(Math.random() * brands.length)];
+    const type = types[Math.floor(Math.random() * types.length)];
+
+    // Pilih kategori acak dari Enum yang valid
+    const category =
+      availableCategories[
+        Math.floor(Math.random() * availableCategories.length)
+      ];
+
+    const price = (Math.floor(Math.random() * 76) + 4) * 5000;
+    const stock = Math.floor(Math.random() * 90) + 10;
+    const imgIndex = (i % 8) + 1;
+
+    products.push({
+      title: `${brand} ${type} Pack #${i}`,
+      description: `Produk berkualitas dari ${brand} varian ${type}. Cocok untuk kebutuhan kucing kesayangan Anda. (Auto-generated #${i})`,
+      price: price,
+      image: `/images/product_0${imgIndex}.png`,
+      stock: stock,
+      category: category, // Ini sekarang Enum, bukan string
+    });
+  }
+
+  // Masukkan SEMUA data produk
   await prisma.product.createMany({
     data: products,
     skipDuplicates: true,
@@ -110,7 +166,7 @@ async function main() {
         name: "Admin Holycat",
         email: "test@example.com",
         password: hashedPassword,
-        role: Role.ADMIN || "ADMIN",
+        role: Role.ADMIN || "ADMIN", // Gunakan Enum atau String fallback
         city: "Jakarta Pusat",
         address: "Jalan Admin No. 1",
         phone: "08123456789",
@@ -121,7 +177,7 @@ async function main() {
     console.log("ℹ️ Admin sudah ada.");
   }
 
-  console.log("🎉 SEEDING SELESAI! Silakan cek pgAdmin.");
+  console.log(`🎉 SEEDING SELESAI! Total ${products.length} produk tersimpan.`);
 }
 
 main()
