@@ -1241,7 +1241,40 @@ app.put("/admin/orders/:id/status", adminAuthMiddleware, async (req, res) => {
     return res.status(500).json({ error: "Gagal memperbarui status pesanan" });
   }
 });
+// --- TAMBAHAN: Route untuk Customer menyelesaikan pesanan ---
+app.put("/orders/:id/receive", authMiddleware, async (req, res) => {
+  const orderId = parseInt(req.params.id);
+  const userId = req.userId;
 
+  try {
+    // 1. Cari order dan pastikan milik user yang login
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+    });
+
+    if (!order) return res.status(404).json({ error: "Order not found" });
+    if (order.userId !== userId)
+      return res.status(403).json({ error: "Forbidden" });
+
+    // 2. Pastikan status saat ini adalah "Dikirim"
+    if (order.status !== "Dikirim") {
+      return res
+        .status(400)
+        .json({ error: "Pesanan belum dikirim atau sudah selesai." });
+    }
+
+    // 3. Update status jadi Selesai
+    const updatedOrder = await prisma.order.update({
+      where: { id: orderId },
+      data: { status: "Selesai" },
+    });
+
+    res.json(updatedOrder);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Gagal menyelesaikan pesanan." });
+  }
+});
 // 23. Get Report Data
 app.get("/admin/reports/orders", adminAuthMiddleware, async (req, res) => {
   const { startDate, endDate, status } = req.query;
